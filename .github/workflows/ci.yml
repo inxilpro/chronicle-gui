@@ -1,0 +1,78 @@
+# CI: ChronicleKit unit tests + an unsigned build of the app.
+#
+# Runner image / Xcode: bump `runs-on` and XCODE_APP together when a newer
+# image or Xcode ships. Available Xcode versions per image:
+# https://github.com/actions/runner-images/blob/main/images/macos/macos-26-Readme.md
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # Bump this when moving to a newer Xcode (see runner-images README above).
+  XCODE_APP: /Applications/Xcode_26.0.app
+
+jobs:
+  test:
+    name: ChronicleKit tests
+    runs-on: macos-26
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "$XCODE_APP"
+          xcodebuild -version
+          swift --version
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ChronicleKit/.build
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-test-${{ runner.os }}-${{ hashFiles('ChronicleKit/Package.resolved') }}
+          restore-keys: |
+            spm-test-${{ runner.os }}-
+
+      - name: Run tests
+        run: swift test --package-path ChronicleKit
+
+  build:
+    name: Build app (unsigned)
+    runs-on: macos-26
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "$XCODE_APP"
+          xcodebuild -version
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            DerivedData/SourcePackages
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-build-${{ runner.os }}-${{ hashFiles('ChronicleKit/Package.resolved', 'Chronicle.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            spm-build-${{ runner.os }}-
+
+      - name: Build Chronicle
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Chronicle.xcodeproj \
+            -scheme Chronicle \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""

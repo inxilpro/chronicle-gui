@@ -1,0 +1,241 @@
+# Release: triggered by pushing a tag like v1.2.3.
+#
+# Builds and archives Chronicle in Release, signs everything with the
+# Developer ID certificate imported from secrets, notarizes and staples,
+# produces a DMG (for humans) and a zip (served to Sparkle), generates and
+# signs appcast.xml, and uploads all three to the GitHub Release for the tag.
+#
+# Required repository secrets (see docs/RELEASING.md for how to create each):
+#   MACOS_CERTIFICATE_P12     base64-encoded Developer ID Application .p12
+#   MACOS_CERTIFICATE_PASSWORD  password protecting the .p12
+#   KEYCHAIN_PASSWORD         arbitrary password for the throwaway CI keychain
+#   APPLE_TEAM_ID             Apple Developer Team ID (657AK7D2D9)
+#   ASC_KEY_ID                App Store Connect API key ID (for notarytool)
+#   ASC_ISSUER_ID             App Store Connect API issuer ID
+#   ASC_PRIVATE_KEY           contents of the App Store Connect API .p8 key
+#   SPARKLE_PRIVATE_KEY       Sparkle EdDSA private key (generate_keys -x output)
+#
+# Runner image / Xcode: bump `runs-on` and XCODE_APP together when a newer
+# image or Xcode ships. Available Xcode versions per image:
+# https://github.com/actions/runner-images/blob/main/images/macos/macos-26-Readme.md
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  # Bump this when moving to a newer Xcode (see runner-images README above).
+  XCODE_APP: /Applications/Xcode_26.0.app
+  # Keep in sync with the Sparkle version resolved by SPM (Package.resolved /
+  # the Xcode project's package graph). Used to download the matching
+  # generate_appcast binary.
+  SPARKLE_VERSION: "2.9.6"
+
+jobs:
+  release:
+    name: Build, notarize, and publish
+    runs-on: macos-26
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "$XCODE_APP"
+          xcodebuild -version
+
+      - name: Derive version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not of the form vX.Y.Z"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            DerivedData/SourcePackages
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-release-${{ runner.os }}-${{ hashFiles('ChronicleKit/Package.resolved', 'Chronicle.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            spm-release-${{ runner.os }}-
+
+      - name: Import Developer ID certificate
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/release.keychain-db"
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+
+          echo -n "$MACOS_CERTIFICATE_P12" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$CERT_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          # Allow codesign to use the key without a UI prompt.
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH" > /dev/null
+
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          rm "$CERT_PATH"
+
+          # Fail fast if the identity is unusable.
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep "Developer ID Application"
+
+      - name: Archive Chronicle
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -o pipefail
+          # Signing happens during the archive so every nested product (the
+          # Helpers/chronicle CLI, the Sparkle framework and its XPC services)
+          # is signed inside-out by Xcode. No codesign --deep anywhere.
+          xcodebuild archive \
+            -project Chronicle.xcodeproj \
+            -scheme Chronicle \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath "$RUNNER_TEMP/Chronicle.xcarchive" \
+            -derivedDataPath DerivedData \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$VERSION" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            ENABLE_HARDENED_RUNTIME=YES \
+            OTHER_CODE_SIGN_FLAGS="--timestamp"
+
+      - name: Stage app from archive
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          cp -R "$RUNNER_TEMP/Chronicle.xcarchive/Products/Applications/Chronicle.app" "$RUNNER_TEMP/dist/"
+
+      - name: Verify code signatures
+        run: |
+          APP="$RUNNER_TEMP/dist/Chronicle.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign --verify --strict --verbose=2 "$APP/Contents/Helpers/chronicle"
+          codesign --verify --strict --verbose=2 "$APP/Contents/Frameworks/Sparkle.framework"
+          # Confirm hardened runtime is on the main executable and the helper.
+          codesign --display --verbose=2 "$APP" 2>&1 | grep -q "runtime"
+          codesign --display --verbose=2 "$APP/Contents/Helpers/chronicle" 2>&1 | grep -q "runtime"
+
+      - name: Notarize and staple app
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          KEY_PATH="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
+          umask 077
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$KEY_PATH"
+
+          ditto -c -k --keepParent "$RUNNER_TEMP/dist/Chronicle.app" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --key "$KEY_PATH" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER_ID" \
+            --wait
+          rm "$RUNNER_TEMP/notarize.zip"
+
+          xcrun stapler staple "$RUNNER_TEMP/dist/Chronicle.app"
+
+      - name: Gatekeeper assessment
+        run: spctl -a -t exec -vv "$RUNNER_TEMP/dist/Chronicle.app"
+
+      - name: Package zip and DMG
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/artifacts"
+
+          # The zip Sparkle serves: built from the stapled app.
+          ditto -c -k --keepParent \
+            "$RUNNER_TEMP/dist/Chronicle.app" \
+            "$RUNNER_TEMP/artifacts/Chronicle-$VERSION.zip"
+
+          # The DMG humans download: app + /Applications symlink.
+          DMG_ROOT="$RUNNER_TEMP/dmg-root"
+          mkdir -p "$DMG_ROOT"
+          cp -R "$RUNNER_TEMP/dist/Chronicle.app" "$DMG_ROOT/"
+          ln -s /Applications "$DMG_ROOT/Applications"
+          hdiutil create \
+            -volname "Chronicle" \
+            -srcfolder "$DMG_ROOT" \
+            -ov -format UDZO \
+            "$RUNNER_TEMP/artifacts/Chronicle-$VERSION.dmg"
+
+          codesign --sign "Developer ID Application" --timestamp \
+            "$RUNNER_TEMP/artifacts/Chronicle-$VERSION.dmg"
+
+          # Notarize and staple the DMG itself so Gatekeeper is satisfied
+          # before it is even opened.
+          xcrun notarytool submit "$RUNNER_TEMP/artifacts/Chronicle-$VERSION.dmg" \
+            --key "$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER_ID" \
+            --wait
+          xcrun stapler staple "$RUNNER_TEMP/artifacts/Chronicle-$VERSION.dmg"
+
+      - name: Generate and sign appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          # Pinned to the same Sparkle release SPM resolves, so the appcast
+          # generator and the in-app framework agree.
+          curl -fsSL -o "$RUNNER_TEMP/sparkle.tar.xz" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          mkdir -p "$RUNNER_TEMP/sparkle"
+          tar -xJf "$RUNNER_TEMP/sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle"
+
+          # The feed URL (…/releases/latest/download/appcast.xml) always serves
+          # the newest release's appcast, so this appcast only needs to
+          # describe the version being released.
+          UPDATES_DIR="$RUNNER_TEMP/updates"
+          mkdir -p "$UPDATES_DIR"
+          cp "$RUNNER_TEMP/artifacts/Chronicle-$VERSION.zip" "$UPDATES_DIR/"
+
+          # NOTE: change the download-url prefix if the repository moves from
+          # inxilpro/chronicle.
+          echo "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/generate_appcast" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/inxilpro/chronicle/releases/download/${GITHUB_REF_NAME}/" \
+            "$UPDATES_DIR"
+
+          cp "$UPDATES_DIR/appcast.xml" "$RUNNER_TEMP/artifacts/appcast.xml"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Chronicle $VERSION" \
+            --generate-notes \
+            "$RUNNER_TEMP/artifacts/Chronicle-$VERSION.dmg" \
+            "$RUNNER_TEMP/artifacts/Chronicle-$VERSION.zip" \
+            "$RUNNER_TEMP/artifacts/appcast.xml"
+
+      - name: Remove temporary keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/release.keychain-db" || true
+          security list-keychains -d user -s login.keychain-db
