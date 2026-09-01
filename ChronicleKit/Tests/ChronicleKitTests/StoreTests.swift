@@ -314,7 +314,9 @@ import Testing
         #expect(selected.payload["text"]?.stringValue == decision.text)
         #expect(selected.payload["decisionStatus"]?.stringValue == "unreviewed")
         #expect(selected.payload["reference"]?["snippet"]?.stringValue == "Retries live in the job")
-        #expect(selected.payload["files"]?[0]?["path"]?.stringValue == "app/Jobs/SyncRefundsJob.php")
+        #expect(
+            selected.payload["files"]?.arrayValue?.first?["path"]?.stringValue
+                == "app/Jobs/SyncRefundsJob.php")
     }
 
     @Test func unlinkAndReadValidateTheirTargets() throws {
