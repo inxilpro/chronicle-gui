@@ -33,7 +33,7 @@
 			containerPortal = 6BA2209B304710B60009EB49 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = CC0000000000000000000007;
-			remoteInfo = chronicle;
+			remoteInfo = ChronicleCLI;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -226,9 +226,9 @@
 			productReference = 6BA220BA304710B70009EB49 /* ChronicleUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
-		CC0000000000000000000007 /* chronicle */ = {
+		CC0000000000000000000007 /* ChronicleCLI */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = CC000000000000000000000B /* Build configuration list for PBXNativeTarget "chronicle" */;
+			buildConfigurationList = CC000000000000000000000B /* Build configuration list for PBXNativeTarget "ChronicleCLI" */;
 			buildPhases = (
 				CC0000000000000000000008 /* Sources */,
 				CC0000000000000000000009 /* Frameworks */,
@@ -240,7 +240,7 @@
 			fileSystemSynchronizedGroups = (
 				CC0000000000000000000006 /* ChronicleCLI */,
 			);
-			name = chronicle;
+			name = ChronicleCLI;
 			packageProductDependencies = (
 				CC0000000000000000000005 /* ChronicleCLICore */,
 			);
@@ -290,7 +290,7 @@
 			projectRoot = "";
 			targets = (
 				6BA220A2304710B60009EB49 /* Chronicle */,
-				CC0000000000000000000007 /* chronicle */,
+				CC0000000000000000000007 /* ChronicleCLI */,
 				6BA220AF304710B70009EB49 /* ChronicleTests */,
 				6BA220B9304710B70009EB49 /* ChronicleUITests */,
 			);
@@ -365,7 +365,7 @@
 		};
 		CC0000000000000000000012 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = CC0000000000000000000007 /* chronicle */;
+			target = CC0000000000000000000007 /* ChronicleCLI */;
 			targetProxy = CC0000000000000000000011 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -645,7 +645,8 @@
 				DEVELOPMENT_TEAM = 657AK7D2D9;
 				ENABLE_HARDENED_RUNTIME = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = ChronicleCLI;
+				PRODUCT_NAME = chronicle;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -659,7 +660,8 @@
 				DEVELOPMENT_TEAM = 657AK7D2D9;
 				ENABLE_HARDENED_RUNTIME = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = ChronicleCLI;
+				PRODUCT_NAME = chronicle;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -704,7 +706,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		CC000000000000000000000B /* Build configuration list for PBXNativeTarget "chronicle" */ = {
+		CC000000000000000000000B /* Build configuration list for PBXNativeTarget "ChronicleCLI" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				CC0000000000000000000013 /* Debug */,

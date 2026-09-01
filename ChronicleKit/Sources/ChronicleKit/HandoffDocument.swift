@@ -129,6 +129,16 @@ public struct HandoffDocument: Sendable, Equatable {
         fileReferences = references
     }
 
+    /// Renderer helper: interprets one inline-code span (plus the text that
+    /// immediately follows it) with the same grammar used for `fileReferences`.
+    /// Returns nil when the span is not a file reference.
+    public static func inlineFileReference(code: String, following: String?) -> InlineFileReference? {
+        guard let parsed = parseFileReference(code: code, following: following) else { return nil }
+        return InlineFileReference(
+            path: parsed.path, line: parsed.line, endLine: parsed.endLine,
+            sha: parsed.sha, headingPath: [])
+    }
+
     /// Heading path exact match, then the first exact substring match of the
     /// snippet before the next same-or-higher heading.
     public func resolve(_ reference: DocumentReference) -> ResolvedLocation? {

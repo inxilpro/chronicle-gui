@@ -1,17 +1,29 @@
-//
-//  ChronicleApp.swift
-//  Chronicle
-//
-//  Created by Chris Morrell on 9/1/26.
-//
-
 import SwiftUI
+import Sparkle
 
 @main
 struct ChronicleApp: App {
+    @State private var model = AppModel()
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        Window("Chronicle", id: "main") {
+            ContentView(model: model)
+        }
+        .defaultSize(width: 1200, height: 800)
+        .commands {
+            AppCommands(model: model, updater: updaterController.updater)
+        }
+
+        Window("History", id: "history") {
+            HistoryView(model: model)
+        }
+        .keyboardShortcut("h", modifiers: [.command, .option])
+        .defaultSize(width: 600, height: 420)
+
+        Settings {
+            SettingsView(model: model, updater: updaterController.updater)
         }
     }
 }
