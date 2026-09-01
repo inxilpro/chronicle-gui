@@ -70,8 +70,14 @@ struct FeedFormatTests {
     }
 
     @Test func coalescedBody() {
-        #expect(FeedFormat.coalescedMessageBody(1) == "Claude added a new review note.")
-        #expect(FeedFormat.coalescedMessageBody(3) == "Claude added 3 new review notes.")
+        #expect(FeedFormat.coalescedMessageBody(1) == "The agent added a new review note.")
+        #expect(FeedFormat.coalescedMessageBody(3) == "The agent added 3 new review notes.")
+    }
+
+    @Test func decisionTitleReflectsReviewState() {
+        #expect(FeedFormat.decisionTitle(.unreviewed) == "Decision requested")
+        #expect(FeedFormat.decisionTitle(.approved) == "Decision approved")
+        #expect(FeedFormat.decisionTitle(.rejected) == "Decision rejected")
     }
 
     @Test func referencePasteboardText() {

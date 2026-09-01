@@ -324,9 +324,19 @@ chronicle read [<message-id>]
 CLI `show`/`session` command):
 
 1. `tuple call current --format json` (accept `id`/`call_id`/`callId`). Output containing
-   "not in a call" → no call, not an error. If it differs from the stored session, create/resume.
+   "not in a call" → no call, not an error. Session creation is explicit: the CLI passes
+   `startSessions: true` (running the skill is an explicit act) and creates/resumes when the
+   call differs from the stored session; the GUI collector passes `startSessions: false` and
+   instead maintains `settings.tuple_available_call` (non-nil only while no active/finalizing
+   session exists), which enables the waiting screen's **Start Session** button. A session is
+   never created merely because Chronicle was open during a call.
    If Tuple reports no call but a local `active` session exists, still collect (that's how the
-   explicit `call_ended` record arrives). Lookup errors with no session → persist
+   explicit `call_ended` record arrives) — and start a grace timer (`settings.tuple_call_missing`):
+   once "not in a call" has persisted ~15 s for the same active session, infer the call end
+   (Tuple sometimes never emits `call_ended`): emit a synthetic `call_ended` event (stable id
+   `tuple:call-ended`, payload `reason: tuple_reported_no_call`) and `markCallEnded`. A call
+   reappearing clears the timer. The user can also force this via **Session ▸ End Session…**
+   (`reason: user_request`). Lookup errors with no session → persist
    `tuple_discovery_error` for the waiting screen.
 2. Tuple transcription, under an exclusive lock on `locks/tuple-<hash>.lock`:
    `tuple --format json transcription show <call-id> --wait --timeout <t> --with-events --cursor chronicle-<call-id>`.
@@ -349,9 +359,11 @@ Tuple binary discovery: `$TUPLE_BIN`, `/usr/local/bin/tuple`, `/opt/homebrew/bin
 - Speech payload: `{"text":…, "speakerId": data.user_id, "raw": <original record>}`; other
   kinds keep the raw record.
 - Health: `transcription_finished|transcription_started|recording_started` → `live`
-  "Transcription is live."; `transcription_dropped` → `stopped` "Tuple reported a transcription
-  gap. Chronicle will not restart it automatically."; `recording_ended|transcription_ended` →
-  `stopped` "Transcription stopped during the call. Restart it in Tuple if intended.".
+  "Transcription is live."; `recording_ended|transcription_ended` → `stopped` "Transcription
+  stopped during the call. Restart it in Tuple if intended.". `transcription_dropped` is stored
+  as evidence but debounced: only when a drop is still the latest Tuple record after a 30 s
+  grace period does health become `stopped` ("…transcription gap that has not recovered…") —
+  brief gaps while Tuple keeps transcribing never surface (first-live-session feedback).
 - Malformed lines counted, not fatal → `error` "Ignored N malformed Tuple record(s); durable
   records were kept."
 - Non-zero tuple exits: distinguish "transcription is not running / no recording / capture not
@@ -373,7 +385,7 @@ Tuple binary discovery: `$TUPLE_BIN`, `/usr/local/bin/tuple`, `/opt/homebrew/bin
   canonicalizes equal to the attached Git root; if any `active`, keep only active; if any
   time-overlaps the session window, keep only overlapping; sort `startedAt` DESC. Exactly one →
   auto-select (health from its state: active→`live` "Chronicle detected", completed→`ended`,
-  interrupted→`stopped`). Zero → `off` "Not detected". Several → `ambiguous` "Multiple Chronicle
+  interrupted→`stopped`). Zero → `off` "Not detected". Several → `ambiguous` "Multiple IDE
   sessions match this repository." and the UI offers the picker.
 - **Log tailing**: cursor `{path, offset, fileId (inode), lastSequence, lastType}` persisted in
   `source_state.cursor_json`; reset when path changed, file shrank, or inode changed. Read from
@@ -400,12 +412,21 @@ Tuple binary discovery: `$TUPLE_BIN`, `/usr/local/bin/tuple`, `/opt/homebrew/bin
  "payload":{"decisionId":"<id>","status":"approved"|"rejected"}}
 {"stableId":"reference-stale:<messageId>","source":"chronicle","kind":"reference_stale",
  "payload":{"messageId":"…","locator":{"heading":[…],"snippet":"…"}}}
+{"stableId":"selection:<messageId>:<timestamp>","source":"chronicle","kind":"message_selected",
+ "payload":{"messageId":"…","kind":"message"|"decision","text":"…","timestamp":"…",
+  "decisionStatus":"…"?,"reference":{"heading":[…],"snippet":"…"}?,"files":[…]?}}
 ```
 
 `reviewDecision` is idempotent for a repeat of the same status; a different status errors
 ("decision has already been reviewed"). Stale-reference reports come from the renderer when a
 `DocumentReference` no longer resolves; verify the stored locator still matches before inserting,
 dedupe.
+
+Selection reports come from the GUI when someone selects a card in the review feed (decision
+cards and plain messages; acks are unselectable). The payload duplicates the full message plus
+its document location so the skill can correlate speech with the entry without a lookup; the
+event is context only — no reply or document change expected. Each selection is a distinct
+event (the timestamp is part of the stable id); selecting also marks the message read.
 
 **The `claude` source** has no reader: `connected` when `repo_path` is set, else `waiting`
 "Waiting for the chronicle skill to attach from a repository".
@@ -448,7 +469,8 @@ until exported), plus auxiliary windows. Follow the `mac-assed-mac-app` skill th
   Strip HTML comments (that's how decision markers stay invisible). Inline code spans followed
   by `@<4-64 hex>` render as file-reference buttons (SHA hidden, shown on hover via help tag)
   that open the file in the configured editor at the line. Document-reference chips in chat
-  scroll-and-highlight the exact snippet; unresolvable ones render stale and report back.
+  scroll-and-highlight the exact snippet; unresolvable ones are hidden immediately and
+  reported back (the skill then unlinks them) — a broken link is never rendered.
   Preserve scroll position across live edits (anchor to nearest heading). Text is selectable;
   ⌘F find bar; Plan-ready state offers Copy (⌥ copies as rendered rich text) and Save As….
 - **Menus**: full command model. File: Save Handoff As… (⇧⌘S), Copy Handoff, Close. Session:

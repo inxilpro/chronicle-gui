@@ -67,6 +67,13 @@ struct AppCommands: Commands {
                 model.installIntegration()
             }
             Divider()
+            Button(model.snapshot.sessionState == .finalizing ? "Finish Session…" : "End Session…") {
+                model.confirmEndSession = true
+            }
+            .keyboardShortcut("e", modifiers: [.command, .shift])
+            .disabled(!model.sessionCanEnd)
+            Button("Close Session") { model.closeSession() }
+                .disabled(!model.sessionIsTerminal)
             Button("Delete Session…") { model.confirmDeleteSession = true }
                 .disabled(!model.sessionIsTerminal)
         }
@@ -91,10 +98,10 @@ struct AppCommands: Commands {
         // Help
         CommandGroup(replacing: .help) {
             Button("Chronicle Help") {
-                open("https://github.com/inxilpro/chronicle#readme")
+                open("https://github.com/inxilpro/chronicle-gui#readme")
             }
             Button("IDE Wire Contract") {
-                open("https://github.com/inxilpro/chronicle/blob/main/docs/ide-wire-contract.md")
+                open("https://github.com/inxilpro/chronicle-gui/blob/main/docs/ide-wire-contract.md")
             }
         }
     }
@@ -109,7 +116,7 @@ struct AppCommands: Commands {
         NSApplication.shared.orderFrontStandardAboutPanel(options: [
             .credits: NSAttributedString(
                 string:
-                    "The Tuple call companion for live technical planning.\nChronicle is the native continuation of Scribe, its Tauri-era planning-scribe prototype.",
+                    "The Tuple call companion for live technical planning.",
                 attributes: [
                     .font: NSFont.systemFont(ofSize: 11),
                     .foregroundColor: NSColor.secondaryLabelColor,

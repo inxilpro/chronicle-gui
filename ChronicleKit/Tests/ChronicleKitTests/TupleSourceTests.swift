@@ -34,7 +34,7 @@ import Testing
         #expect(ended.status?.status == "ended")
     }
 
-    @Test func emptySpeechIsDroppedAndGapsStop() {
+    @Test func emptySpeechIsDroppedAndBriefGapsDoNotChangeStatus() {
         let batch = TupleRecordParser.parse(
             Data(
                 """
@@ -43,8 +43,8 @@ import Testing
 
                 """.utf8))
         #expect(batch.events.map(\.kind) == ["transcription_dropped"])
-        #expect(batch.status?.status == "stopped")
-        #expect(batch.status?.detail.contains("will not restart it automatically") == true)
+        // A drop is kept as evidence but only a persistent gap changes health.
+        #expect(batch.status == nil)
     }
 
     @Test func stableIdentityFallsBackThroughIdShapes() {
@@ -147,6 +147,23 @@ import Testing
         #expect(health.detail?.contains("stopped during the call") == true)
     }
 
+    @Test func connectingCallWithoutStoredTranscriptIsWaitingNotAnError() throws {
+        let home = try TestHome()
+        let session = try home.store.createOrResumeSession(callId: "call-connecting")
+        // Tuple's exact diagnostic while a call is still connecting: the call
+        // exists in `call current` but not yet in the transcription store.
+        let tuple = try makeTupleMock(
+            in: home.root,
+            body: """
+                printf '%s\\n' '{"error":"no stored call matching \\"call-connecting\\"; run \\"tuple transcription list\\" to find stored call ids or \\"tuple call current\\" for the active call id"}'
+                exit 1
+                """)
+        try tuple.collect(store: home.store, session: session, timeout: "1ms")
+        let health = try home.store.sourceHealth(sessionId: session.id)[0]
+        #expect(health.status == "waiting")
+        #expect(health.detail?.contains("start it in Tuple") == true)
+    }
+
     @Test func currentCallAcceptsThePublicJSONContract() throws {
         let home = try TestHome()
         let tuple = try makeTupleMock(
@@ -215,6 +232,137 @@ import Testing
         let snapshot = try home.store.snapshot()
         #expect(snapshot.sources[0].status == "error")
         #expect(snapshot.sources[0].detail?.contains("Install CLI") == true)
+    }
+
+    @Test func persistentGapEscalatesOnlyAfterTheGracePeriod() throws {
+        let home = try TestHome()
+        let session = try home.store.createOrResumeSession(callId: "call-gap")
+        try home.store.setSourceState(
+            sessionId: session.id, source: "tuple", status: "live", detail: "Transcription is live.")
+        try home.store.insertSourceEvents(
+            sessionId: session.id,
+            events: [
+                makeEvent("speech-1", occurredAt: "2026-09-01T12:00:00.000Z"),
+                NormalizedEvent(
+                    stableId: "gap-1", source: "tuple",
+                    occurredAt: "2026-09-01T12:00:05.000Z", observedAt: "2026-09-01T12:00:05.000Z",
+                    kind: "transcription_dropped", payload: .object([:])),
+            ])
+        let dropTime = ChronicleTimestamp.date(from: "2026-09-01T12:00:05.000Z")!
+
+        try TupleClient.escalatePersistentGap(
+            store: home.store, session: session, now: dropTime.addingTimeInterval(10))
+        #expect(try home.store.sourceState(sessionId: session.id, source: "tuple")?.status == "live")
+
+        try TupleClient.escalatePersistentGap(
+            store: home.store, session: session, now: dropTime.addingTimeInterval(45))
+        let escalated = try home.store.sourceState(sessionId: session.id, source: "tuple")
+        #expect(escalated?.status == "stopped")
+        #expect(escalated?.detail?.contains("transcription gap") == true)
+
+        // Speech after the drop means the gap recovered; no escalation.
+        try home.store.setSourceState(
+            sessionId: session.id, source: "tuple", status: "live", detail: "Transcription is live.")
+        try home.store.insertSourceEvents(
+            sessionId: session.id,
+            events: [makeEvent("speech-2", occurredAt: "2026-09-01T12:00:06.000Z")])
+        try TupleClient.escalatePersistentGap(
+            store: home.store, session: session, now: dropTime.addingTimeInterval(90))
+        #expect(try home.store.sourceState(sessionId: session.id, source: "tuple")?.status == "live")
+    }
+
+    @Test func missingCallInfersTheEndAfterTheGracePeriod() throws {
+        let home = try TestHome()
+        let session = try home.store.createOrResumeSession(callId: "call-missing")
+        let start = Date()
+
+        try home.store.recordTupleCallMissing(sessionId: session.id, now: start)
+        #expect(try home.store.session(session.id).state == .active)
+
+        // Still inside the grace period: nothing changes.
+        try home.store.recordTupleCallMissing(
+            sessionId: session.id, now: start.addingTimeInterval(5))
+        #expect(try home.store.session(session.id).state == .active)
+
+        try home.store.recordTupleCallMissing(
+            sessionId: session.id, now: start.addingTimeInterval(20))
+        #expect(try home.store.session(session.id).state == .finalizing)
+        let result = try home.store.show(sessionId: session.id, consumer: "test", limit: 10)
+        let ended = try #require(result.events.first { $0.kind == "call_ended" })
+        #expect(ended.stableId == "tuple:call-ended")
+        #expect(ended.payload["reason"]?.stringValue == "tuple_reported_no_call")
+    }
+
+    @Test func callReappearingResetsTheMissingCallTimer() throws {
+        let home = try TestHome()
+        let session = try home.store.createOrResumeSession(callId: "call-blip")
+        let start = Date()
+        try home.store.recordTupleCallMissing(sessionId: session.id, now: start)
+        try home.store.clearTupleCallMissing()
+        // The timer restarts from the next observation, so no inference yet.
+        try home.store.recordTupleCallMissing(
+            sessionId: session.id, now: start.addingTimeInterval(20))
+        #expect(try home.store.session(session.id).state == .active)
+    }
+
+    @Test func manualEndSessionFinalizesAndEmitsCallEnded() throws {
+        let home = try TestHome()
+        let session = try home.store.createOrResumeSession(callId: "call-manual")
+        try home.store.endCallWithoutTupleRecord(session.id, reason: "user_request")
+        #expect(try home.store.session(session.id).state == .finalizing)
+        let result = try home.store.show(sessionId: session.id, consumer: "test", limit: 10)
+        #expect(result.events.map(\.kind) == ["call_ended"])
+        // Idempotent once the session is no longer active.
+        try home.store.endCallWithoutTupleRecord(session.id, reason: "user_request")
+        #expect(try home.store.session(session.id).state == .finalizing)
+    }
+
+    @Test func collectorWithoutStartSessionsOnlyRecordsAvailability() throws {
+        let home = try TestHome()
+        try Collector.collectOnce(
+            store: home.store, tuple: FakeTuple(callId: "call-live"), timeout: "1ms",
+            startSessions: false)
+        // The GUI collector never creates a session; it offers the call to
+        // the waiting screen's Start Session button instead.
+        #expect(try home.store.currentSession() == nil)
+        #expect(try home.store.availableTupleCall() == "call-live")
+        let waiting = try home.store.snapshot()
+        #expect(waiting.mode == .waitingCall)
+        #expect(waiting.availableCallId == "call-live")
+        #expect(waiting.sources[0].status == "connected")
+
+        // An explicit start consumes the availability.
+        _ = try home.store.createOrResumeSession(callId: "call-live")
+        try Collector.collectOnce(
+            store: home.store, tuple: FakeTuple(callId: "call-live"), timeout: "1ms",
+            startSessions: false)
+        #expect(try home.store.availableTupleCall() == nil)
+        #expect(try home.store.currentSession()?.id == "call-live")
+
+        // The call disappearing clears the offer.
+        try home.store.endCallWithoutTupleRecord("call-live", reason: "user_request")
+        try home.store.finishSession("call-live")
+        try home.store.deselectTerminalSession()
+        try Collector.collectOnce(
+            store: home.store, tuple: FakeTuple(callId: nil), timeout: "1ms",
+            startSessions: false)
+        #expect(try home.store.availableTupleCall() == nil)
+        #expect(try home.store.snapshot().sources[0].status == "waiting")
+    }
+
+    @Test func collectorWithoutStartSessionsNeverSwitchesCalls() throws {
+        let home = try TestHome()
+        let session = try home.store.createOrResumeSession(callId: "call-a")
+        // Tuple has moved on to another call; the tracked session stays put
+        // and the missing-call grace timer runs instead of auto-switching.
+        try Collector.collectOnce(
+            store: home.store, tuple: FakeTuple(callId: "call-b"), timeout: "1ms",
+            startSessions: false)
+        #expect(try home.store.currentSession()?.id == "call-a")
+        #expect(try home.store.session(session.id).state == .active)
+        #expect(try home.store.setting("tuple_call_missing") != nil)
+        // No offer while a session exists.
+        #expect(try home.store.availableTupleCall() == nil)
     }
 
     @Test func collectorKeepsCollectingAfterCallDisappears() throws {

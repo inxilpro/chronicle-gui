@@ -37,9 +37,11 @@ final class NotificationController: NSObject {
         }
     }
 
-    /// Requested at first session start, never at launch.
+    /// Requested at first session start, never at launch. Badge authorization
+    /// must be part of the request: without it macOS suppresses the dock tile
+    /// badge for any app registered with UserNotifications.
     func requestPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) {
             granted, _ in
             Task { @MainActor [weak self] in
                 self?.authorized = granted

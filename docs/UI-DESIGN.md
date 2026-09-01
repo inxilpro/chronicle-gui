@@ -38,15 +38,16 @@ Chronicle-IDE folder chooser (NSOpenPanel, directories only).
 
 Centered column: app icon, eyebrow "Tuple call companion", heading + copy per mode:
 
-- `waitingCall`: **"Waiting for a Tuple call"** — "Join a call in Tuple and Chronicle will
-  detect it automatically. Start transcription in Tuple when you're ready." Below: the source
-  strip, any Tuple discovery error, and (when integration is not installed) a prominent
-  **Install Claude Integration** button.
+- `waitingCall`: **"Waiting for a Tuple call"**, or **"Tuple call detected"** when the
+  collector reports an available call. Below the copy: the source strip, any Tuple discovery
+  error, a prominent **Start Session** button (enabled only while a call is available —
+  sessions start explicitly, never merely because the app was open during a call), and (when
+  integration is not installed) an **Install Claude Integration** button.
 - If the IDE registry is missing: quiet note with a **Choose Chronicle Folder…** link.
 
 ### Review pane (left)
 
-Header: "Review" + subtitle ("Claude's stream" / "Session complete") + unread pill (cap 99+).
+Header: "Review" + subtitle ("Agent stream" / "Session complete") + unread pill (cap 99+).
 
 Banners (stacked, in priority order): integration missing (with inline Install), IDE-folder
 notice, dismissible error/live-warning, per-source detail for `stopped|error|ambiguous`, and the
@@ -54,37 +55,56 @@ mode banner with these strings:
 
 - `waitingTranscription`: "Call found. Waiting for transcription — start transcription in Tuple."
 - `waitingClaude`: "Waiting for the chronicle skill to attach from a repository."
-- `finalizing`: "Tuple call ended. Claude is finishing the handoff."
+- `finalizing`: "Tuple call ended. The agent is finishing the handoff." — with a
+  **Finish Session…** accessory (confirmed), completing the session without waiting for an
+  agent that may never finish.
 - `interrupted`: "This session was interrupted. Review or save the handoff, then delete it when
   no longer needed."
 
 IDE-session picker appears only when >1 candidate and status is `ambiguous`: rows of
 `projectName · started time · state`.
 
-Message feed: `List` (native selection/scroll behavior for free) of three row shapes:
+Message feed: `List` (native scroll/keyboard behavior for free) of three row shapes. Info
+glyphs and timestamps align with the first line of the row's text, never vertically centered:
 
-- **ack** — quiet single-line row, info glyph, always read.
+- **ack** — quiet single-line row, info glyph, always read, **not selectable**.
 - **message** — bubble: body (rendered inline markdown code/bold), optional reference chip,
-  "New" pill when unread, timestamp.
-- **decision** — card: ◆ glyph, "Decision requested" + timestamp, body, optional reference
-  chip, footer **Approve** / **Reject** (optimistic; "Approving…"/"Rejecting…" while pending;
-  static "Approved ✓"/"Rejected ×" once reviewed).
+  "New" pill when unread, timestamp on the first line.
+- **decision** — card whose title and icon reflect review state: unreviewed ◆ accent glyph +
+  "Decision requested" + **Approve** / **Reject** footer; approved → gray `checkmark.square` +
+  "Decision approved" (gray, not green — green still reads as a call to action); rejected →
+  red `xmark.square.fill` + "Decision rejected" (rejection keeps visual weight so scrolling
+  back to check for a replacement decision is easy). Reviewed cards keep their box and body
+  but drop the buttons and status line. The card's reference renders as a subtle
+  dotted-underline link (no chip); selecting the card is the primary navigation.
+
+**Selection model:** decision cards and plain messages are selectable; acks are not. The
+platform full-background highlight is suppressed (`listRowBackground(.clear)`); selection
+draws an accent **outline** on the row's rounded rect instead. Selecting a row marks it read,
+emits a `message_selected` event to the skill (so Claude knows which card the room is
+discussing), and — for decision cards — scrolls the handoff pane to the linked entry.
 
 Reference chips show last heading segment + snippet; clicking scrolls the handoff pane to the
-resolved range and flashes a highlight. Unresolvable → stale chip (non-interactive) + report.
+resolved range and flashes a highlight. Unresolvable → chip/link hidden immediately + stale
+report back to the skill (which unlinks it); a broken link is never rendered.
 
 Empty state: "You're all caught up" / "New review notes and decisions will appear here."
 
 Auto-scroll to bottom only when already within ~100 pt of the bottom.
 
-Footer bar: source strip (three status dots: tuple / claude / chronicle, label + tooltip
+Footer bar: source strip (three status dots: tuple / claude / chronicle — displayed as
+Tuple / Agent / IDE, label + tooltip
 detail, popover with full detail per source), Mark All as Read button with count.
 
 ### Handoff pane (right)
 
 Header: "Planning handoff" + state label ("Live notes" · "Internal notes — notes.md" with path
 tooltip, or **"Plan ready"** in `complete`/`interrupted` with "Saved ✓" pill when
-`handoffSaved`, plus **Copy** and **Save As…** buttons).
+`handoffSaved`, plus **Copy** and **Save As…** buttons). While a session can end
+(`active`/`finalizing`), the header's top right carries a subtle small **End Session…** /
+**Finish Session…** button (mirrors Session ▸ End Session… ⇧⌘E, confirmed) — ending must not
+depend on the Tuple call ending, and must be discoverable without the menu bar. Never a big
+red prominent button.
 
 Body: rendered Markdown (native SwiftUI text, selectable). Requirements:
 
@@ -103,7 +123,7 @@ Body: rendered Markdown (native SwiftUI text, selectable). Requirements:
 
 | Element | Control | Selection | Keyboard | Copy | Drag | Context menu | Saved state | AX |
 |---|---|---|---|---|---|---|---|---|
-| Review feed | `List` | single row | ↑↓ move, Space toggles read, ⏎ approve / ⌫ reject focused decision | message text (plain) | — | Copy Message, Mark Read/Unread, Approve/Reject (decisions), Copy Reference | scroll pos (session-scoped) | list; decision rows announce "Decision requested, unreviewed" |
+| Review feed | `List` | single row (accent outline, no full-background highlight; acks unselectable; selecting marks read + emits `message_selected` + decisions jump the handoff pane) | ↑↓ move, Space toggles read, ⏎ approve / ⌫ reject focused decision | message text (plain) | — | Copy Message, Mark Read/Unread, Approve/Reject (decisions), Copy Reference | scroll pos (session-scoped) | list; decision rows announce state ("Decision requested, unreviewed" / "Decision approved/rejected") |
 | Decision card buttons | `Button` | — | ⏎/⌫ when row focused | — | — | mirrored in row menu + Session menu | review status (db) | buttons labeled "Approve decision"/"Reject decision" |
 | Reference chip | `Button` styled chip | — | activates on ⏎ | Copy Reference (heading › snippet) | — | Copy Reference | — | "Reference: <heading>" |
 | Source strip | custom HStack of dots | — | focusable, ⏎ opens popover | — | — | — | — | each: "<source>, <status>" |

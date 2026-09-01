@@ -1,5 +1,6 @@
 import AppKit
 import ChronicleKit
+import Markdown
 
 /// The fully laid-out handoff: attributed text plus source↔rendered maps used
 /// for anchor scrolling, snippet highlighting, and Copy as Markdown.
@@ -44,6 +45,9 @@ struct HandoffRendering {
     }
 }
 
+/// Renders the handoff as GitHub-flavored Markdown with GitHub-style
+/// typography: heading scale with rules under h1/h2, filled code blocks,
+/// bordered blockquotes, task lists, and real tables.
 enum HandoffTextBuilder {
     static let baseSize: CGFloat = 13
     static let axHeadingLevel = NSAttributedString.Key("AXHeadingLevel")
@@ -52,21 +56,11 @@ enum HandoffTextBuilder {
         let output = NSMutableAttributedString()
         var blocks: [HandoffRendering.RenderedBlock] = []
         var anchors: [(anchor: String, range: NSRange)] = []
-        let scale = CGFloat(scale)
+        let renderer = Renderer(scale: CGFloat(scale))
 
-        for (index, block) in document.blocks.enumerated() {
+        for block in document.blocks {
             let start = output.length
-            if block.isHeading {
-                appendHeading(block, scale: scale, into: output)
-            } else if isFencedCode(block.text) {
-                appendCodeBlock(block.text, scale: scale, into: output)
-            } else if isBlockquote(block.text) {
-                appendBlockquote(block.text, scale: scale, into: output)
-            } else if isList(block.text) {
-                appendList(block.text, scale: scale, into: output)
-            } else {
-                appendParagraph(block.text, scale: scale, into: output)
-            }
+            renderer.render(blockText: block.text, into: output)
             let renderedRange = NSRange(location: start, length: output.length - start)
             blocks.append(
                 HandoffRendering.RenderedBlock(
@@ -76,237 +70,438 @@ enum HandoffTextBuilder {
             if block.isHeading {
                 anchors.append((block.anchor, renderedRange))
             }
-            if index < document.blocks.count - 1 {
-                output.append(NSAttributedString(string: "\n", attributes: [
-                    .font: NSFont.systemFont(ofSize: baseSize * scale),
-                    .foregroundColor: NSColor.labelColor,
-                ]))
-            }
         }
         return HandoffRendering(id: UUID(), text: output, blocks: blocks, headingAnchors: anchors)
     }
+}
 
-    // MARK: - Block shapes
+/// One rendering pass; holds the scale and the GitHub-flavored style palette.
+private final class Renderer {
+    let scale: CGFloat
 
-    private static func isFencedCode(_ text: String) -> Bool {
-        let trimmed = text.drop(while: { $0 == " " })
-        return trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~")
+    init(scale: CGFloat) {
+        self.scale = scale
     }
 
-    private static func isBlockquote(_ text: String) -> Bool {
-        text.drop(while: { $0 == " " }).hasPrefix(">")
+    private var base: CGFloat { HandoffTextBuilder.baseSize * scale }
+
+    // GitHub's type scale relative to its 16px body, applied to the app's base.
+    private func headingSize(_ level: Int) -> CGFloat {
+        let ratios: [CGFloat] = [2.0, 1.5, 1.25, 1.0, 0.875, 0.85]
+        return base * ratios[min(max(level, 1), 6) - 1]
     }
 
-    private static func isList(_ text: String) -> Bool {
-        let lines = text.split(separator: "\n").map { $0.drop(while: { $0 == " " }) }
-        guard let first = lines.first else { return false }
-        return listMarker(String(first)) != nil
-    }
+    private var codeBackground: NSColor { .quaternarySystemFill }
+    private var rule: NSColor { .separatorColor }
 
-    private static func listMarker(_ line: String) -> (marker: String, rest: String)? {
-        if let match = line.firstMatch(of: /^([-*+])\s+(.*)$/) {
-            return ("•", String(match.2))
-        }
-        if let match = line.firstMatch(of: /^(\d{1,4})[.)]\s+(.*)$/) {
-            return ("\(match.1).", String(match.2))
-        }
-        return nil
-    }
+    // MARK: - Inline state
 
-    private static func appendHeading(
-        _ block: HandoffDocument.Block, scale: CGFloat, into output: NSMutableAttributedString
-    ) {
-        let level = block.level ?? 1
-        let sizes: [CGFloat] = [24, 20, 16, 14, 13, 13]
-        let size = sizes[min(max(level, 1), 6) - 1] * scale
-        let title = block.headingPath.last ?? block.text
-        let style = NSMutableParagraphStyle()
-        style.paragraphSpacingBefore = 6 * scale
-        style.paragraphSpacing = 4 * scale
-        output.append(
-            NSAttributedString(
-                string: title,
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: size, weight: level <= 2 ? .bold : .semibold),
-                    .foregroundColor: NSColor.labelColor,
-                    .paragraphStyle: style,
-                    axHeadingLevel: level,
-                ]))
-    }
-
-    private static func appendCodeBlock(
-        _ text: String, scale: CGFloat, into output: NSMutableAttributedString
-    ) {
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        if let first = lines.first, isFencedCode(first) { lines.removeFirst() }
-        if let last = lines.last, isFencedCode(last) { lines.removeLast() }
-        let style = NSMutableParagraphStyle()
-        style.firstLineHeadIndent = 12 * scale
-        style.headIndent = 12 * scale
-        style.paragraphSpacingBefore = 2 * scale
-        output.append(
-            NSAttributedString(
-                string: lines.joined(separator: "\n"),
-                attributes: [
-                    .font: NSFont.monospacedSystemFont(ofSize: (baseSize - 1) * scale, weight: .regular),
-                    .foregroundColor: NSColor.labelColor,
-                    .backgroundColor: NSColor.quaternarySystemFill,
-                    .paragraphStyle: style,
-                ]))
-    }
-
-    private static func appendBlockquote(
-        _ text: String, scale: CGFloat, into output: NSMutableAttributedString
-    ) {
-        let cleaned = text.split(separator: "\n", omittingEmptySubsequences: false)
-            .map { line -> String in
-                var trimmed = line.drop(while: { $0 == " " })
-                if trimmed.hasPrefix(">") { trimmed = trimmed.dropFirst() }
-                if trimmed.hasPrefix(" ") { trimmed = trimmed.dropFirst() }
-                return String(trimmed)
-            }
-            .joined(separator: "\n")
-        let style = NSMutableParagraphStyle()
-        style.firstLineHeadIndent = 14 * scale
-        style.headIndent = 14 * scale
-        appendInline(
-            cleaned, scale: scale, into: output,
-            baseColor: .secondaryLabelColor, paragraphStyle: style)
-    }
-
-    private static func appendList(
-        _ text: String, scale: CGFloat, into output: NSMutableAttributedString
-    ) {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        for (index, line) in lines.enumerated() {
-            let leading = line.prefix(while: { $0 == " " }).count
-            let level = min(leading / 2, 4)
-            let stripped = String(line.drop(while: { $0 == " " }))
-            let style = NSMutableParagraphStyle()
-            let indent = CGFloat(14 + level * 16) * scale
-            style.firstLineHeadIndent = indent - 14 * scale
-            style.headIndent = indent
-            style.paragraphSpacing = 1 * scale
-            if let (marker, rest) = listMarker(stripped) {
-                output.append(
-                    NSAttributedString(
-                        string: "\(marker)  ",
-                        attributes: [
-                            .font: NSFont.systemFont(ofSize: baseSize * scale),
-                            .foregroundColor: NSColor.secondaryLabelColor,
-                            .paragraphStyle: style,
-                        ]))
-                appendInline(rest, scale: scale, into: output, paragraphStyle: style)
-            } else {
-                appendInline(stripped, scale: scale, into: output, paragraphStyle: style)
-            }
-            if index < lines.count - 1 {
-                output.append(NSAttributedString(string: "\n"))
-            }
-        }
-    }
-
-    private static func appendParagraph(
-        _ text: String, scale: CGFloat, into output: NSMutableAttributedString
-    ) {
-        let style = NSMutableParagraphStyle()
-        style.paragraphSpacing = 2 * scale
-        style.lineSpacing = 1.5 * scale
-        appendInline(text, scale: scale, into: output, paragraphStyle: style)
-    }
-
-    // MARK: - Inline runs
-
-    private struct InlineRun {
-        var text: String
-        var intent: InlinePresentationIntent
+    private struct InlineContext {
+        var size: CGFloat
+        var bold = false
+        var italic = false
+        var strikethrough = false
         var link: URL?
+        var color: NSColor = .labelColor
     }
 
-    private static func appendInline(
-        _ text: String, scale: CGFloat, into output: NSMutableAttributedString,
-        baseColor: NSColor = .labelColor,
-        paragraphStyle: NSParagraphStyle = NSParagraphStyle.default
-    ) {
-        let parsed = inlineMarkdown(text)
-        var runs: [InlineRun] = []
-        for run in parsed.runs {
-            runs.append(
-                InlineRun(
-                    text: String(parsed.characters[run.range]),
-                    intent: run.inlinePresentationIntent ?? [],
-                    link: run.link))
+    /// Everything that positions a run's paragraph: indents, spacing, and the
+    /// text blocks (code fill, quote bar, table cell) it belongs to.
+    private struct BlockContext {
+        var style: NSMutableParagraphStyle
+        var extra: [NSAttributedString.Key: Any] = [:]
+
+        init(_ configure: (NSMutableParagraphStyle) -> Void = { _ in }) {
+            style = NSMutableParagraphStyle()
+            configure(style)
         }
-        var index = 0
-        while index < runs.count {
-            let run = runs[index]
-            defer { index += 1 }
-            if run.intent.contains(.code) {
-                let followingText: String? =
-                    index + 1 < runs.count && runs[index + 1].intent.isEmpty
-                        && runs[index + 1].link == nil
-                    ? runs[index + 1].text : nil
-                if let reference = HandoffDocument.inlineFileReference(
-                    code: run.text, following: followingText)
-                {
-                    // The " @sha" that follows the code span is hidden in the
-                    // rendered text; the commit shows in the hover help tag.
-                    if let sha = reference.sha, let followingText,
-                        followingText.hasPrefix(" @\(sha)")
-                    {
-                        runs[index + 1].text = String(followingText.dropFirst(2 + sha.count))
+    }
+
+    // MARK: - Top level
+
+    func render(blockText: String, into output: NSMutableAttributedString) {
+        let parsed = Document(parsing: blockText)
+        for child in parsed.children {
+            render(markup: child, depth: 0, into: output)
+        }
+    }
+
+    private func render(markup: Markup, depth: Int, into output: NSMutableAttributedString) {
+        switch markup {
+        case let heading as Heading:
+            renderHeading(heading, into: output)
+        case let paragraph as Paragraph:
+            renderParagraph(paragraph, into: output)
+        case let code as CodeBlock:
+            renderCodeBlock(code, into: output)
+        case let quote as BlockQuote:
+            renderBlockquote(quote, depth: depth, into: output)
+        case let list as UnorderedList:
+            renderList(items: Array(list.listItems), ordered: false, start: 1, depth: depth, into: output)
+        case let list as OrderedList:
+            renderList(items: Array(list.listItems), ordered: true, start: Int(list.startIndex), depth: depth, into: output)
+        case let table as Markdown.Table:
+            renderTable(table, into: output)
+        case is ThematicBreak:
+            renderThematicBreak(into: output)
+        case let html as HTMLBlock:
+            renderVerbatim(html.rawHTML, into: output)
+        default:
+            // Anything unhandled renders as its plain text rather than vanishing.
+            renderVerbatim(markup.format(), into: output)
+        }
+    }
+
+    // MARK: - Blocks
+
+    private func renderHeading(_ heading: Heading, into output: NSMutableAttributedString) {
+        let level = heading.level
+        var block = BlockContext { style in
+            style.paragraphSpacingBefore = 14 * self.scale
+            style.paragraphSpacing = 8 * self.scale
+        }
+        if level <= 2 {
+            let border = NSTextBlock()
+            border.setBorderColor(rule)
+            border.setWidth(1, type: .absoluteValueType, for: .border, edge: .maxY)
+            border.setWidth(4 * scale, type: .absoluteValueType, for: .padding, edge: .maxY)
+            border.setContentWidth(100, type: .percentageValueType)
+            block.style.textBlocks = [border]
+        }
+        block.extra[HandoffTextBuilder.axHeadingLevel] = level
+        var context = InlineContext(size: headingSize(level))
+        context.bold = true
+        if level == 6 {
+            context.color = .secondaryLabelColor
+        }
+        renderInlineChildren(of: heading, context: context, block: block, into: output)
+        terminateParagraph(block: block, context: context, into: output)
+    }
+
+    private func renderParagraph(_ paragraph: Paragraph, into output: NSMutableAttributedString) {
+        let block = BlockContext { style in
+            style.paragraphSpacing = 10 * self.scale
+            style.lineSpacing = 2.5 * self.scale
+        }
+        let context = InlineContext(size: base)
+        renderInlineChildren(of: paragraph, context: context, block: block, into: output)
+        terminateParagraph(block: block, context: context, into: output)
+    }
+
+    private func renderCodeBlock(_ code: CodeBlock, into output: NSMutableAttributedString) {
+        let fill = NSTextBlock()
+        fill.backgroundColor = codeBackground
+        fill.setContentWidth(100, type: .percentageValueType)
+        fill.setWidth(10 * scale, type: .absoluteValueType, for: .padding)
+        fill.setWidth(6 * scale, type: .absoluteValueType, for: .margin, edge: .minY)
+        fill.setWidth(6 * scale, type: .absoluteValueType, for: .margin, edge: .maxY)
+        let block = BlockContext { style in
+            style.textBlocks = [fill]
+            style.lineSpacing = 1.5 * self.scale
+        }
+        let attributes = attributes(
+            for: InlineContext(size: base * 0.85), monospaced: true, block: block)
+        var text = code.code
+        while text.hasSuffix("\n") {
+            text.removeLast()
+        }
+        output.append(NSAttributedString(string: text + "\n", attributes: attributes))
+    }
+
+    private func renderBlockquote(_ quote: BlockQuote, depth: Int, into output: NSMutableAttributedString) {
+        let bar = NSTextBlock()
+        bar.setBorderColor(rule)
+        bar.setWidth(3, type: .absoluteValueType, for: .border, edge: .minX)
+        bar.setWidth(12 * scale, type: .absoluteValueType, for: .padding, edge: .minX)
+        bar.setContentWidth(100, type: .percentageValueType)
+        for child in quote.children {
+            if let paragraph = child as? Paragraph {
+                let block = BlockContext { style in
+                    style.textBlocks = [bar]
+                    style.paragraphSpacing = 6 * self.scale
+                    style.lineSpacing = 2.5 * self.scale
+                }
+                var context = InlineContext(size: base)
+                context.color = .secondaryLabelColor
+                renderInlineChildren(of: paragraph, context: context, block: block, into: output)
+                terminateParagraph(block: block, context: context, into: output)
+            } else {
+                render(markup: child, depth: depth + 1, into: output)
+            }
+        }
+    }
+
+    private func renderList(
+        items: [ListItem], ordered: Bool, start: Int, depth: Int,
+        into output: NSMutableAttributedString
+    ) {
+        for (offset, item) in items.enumerated() {
+            let markerText: String
+            if let checkbox = item.checkbox {
+                markerText = checkbox == .checked ? "☑" : "☐"
+            } else if ordered {
+                markerText = "\(start + offset)."
+            } else {
+                markerText = ["•", "◦", "▪"][min(depth, 2)]
+            }
+            let indent = CGFloat(depth) * 20 * scale
+            let block = BlockContext { style in
+                style.firstLineHeadIndent = indent + 4 * self.scale
+                style.headIndent = indent + 22 * self.scale
+                style.paragraphSpacing = 3 * self.scale
+                style.lineSpacing = 2 * self.scale
+                style.tabStops = [NSTextTab(textAlignment: .left, location: indent + 22 * self.scale)]
+                style.defaultTabInterval = 22 * self.scale
+            }
+            var context = InlineContext(size: base)
+            var markerAttributes = attributes(for: context, monospaced: false, block: block)
+            markerAttributes[.foregroundColor] = NSColor.secondaryLabelColor
+            output.append(NSAttributedString(string: "\(markerText)\t", attributes: markerAttributes))
+            if item.checkbox == .checked {
+                context.strikethrough = false
+            }
+            var closedParagraph = false
+            for (index, child) in item.children.enumerated() {
+                if index == 0, let paragraph = child as? Paragraph {
+                    renderInlineChildren(of: paragraph, context: context, block: block, into: output)
+                    terminateParagraph(block: block, context: context, into: output)
+                    closedParagraph = true
+                } else {
+                    if !closedParagraph {
+                        terminateParagraph(block: block, context: context, into: output)
+                        closedParagraph = true
                     }
-                    let link = FileLink(
-                        path: reference.path, line: reference.line,
-                        endLine: reference.endLine, sha: reference.sha)
-                    var attributes: [NSAttributedString.Key: Any] = [
-                        .font: NSFont.monospacedSystemFont(ofSize: (baseSize - 1) * scale, weight: .medium),
-                        .foregroundColor: NSColor.linkColor,
-                        .toolTip: link.helpText,
-                        .underlineStyle: 0,
-                        .paragraphStyle: paragraphStyle,
-                    ]
-                    if let url = link.url {
-                        attributes[.link] = url
-                    }
-                    output.append(NSAttributedString(string: link.pathWithLine, attributes: attributes))
-                    continue
+                    render(markup: child, depth: depth + 1, into: output)
                 }
             }
-            appendPlainRun(
-                run, scale: scale, into: output, baseColor: baseColor, paragraphStyle: paragraphStyle)
+            if !closedParagraph {
+                terminateParagraph(block: block, context: context, into: output)
+            }
         }
     }
 
-    private static func appendPlainRun(
-        _ run: InlineRun, scale: CGFloat, into output: NSMutableAttributedString,
-        baseColor: NSColor, paragraphStyle: NSParagraphStyle
-    ) {
-        var attributes: [NSAttributedString.Key: Any] = [
-            .foregroundColor: baseColor,
-            .paragraphStyle: paragraphStyle,
-        ]
-        if run.intent.contains(.code) {
-            attributes[.font] = NSFont.monospacedSystemFont(ofSize: (baseSize - 1) * scale, weight: .regular)
-            attributes[.backgroundColor] = NSColor.quaternarySystemFill
-        } else {
-            var font = NSFont.systemFont(ofSize: baseSize * scale)
-            var traits: NSFontDescriptor.SymbolicTraits = []
-            if run.intent.contains(.stronglyEmphasized) { traits.insert(.bold) }
-            if run.intent.contains(.emphasized) { traits.insert(.italic) }
-            if !traits.isEmpty {
-                let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
-                font = NSFont(descriptor: descriptor, size: baseSize * scale) ?? font
+    private func renderTable(_ table: Markdown.Table, into output: NSMutableAttributedString) {
+        let columns = table.maxColumnCount
+        guard columns > 0 else { return }
+        let textTable = NSTextTable()
+        textTable.numberOfColumns = columns
+        textTable.setContentWidth(100, type: .percentageValueType)
+
+        func alignment(_ column: Int) -> NSTextAlignment {
+            guard column < table.columnAlignments.count else { return .left }
+            switch table.columnAlignments[column] {
+            case .center: return .center
+            case .right: return .right
+            default: return .left
             }
-            attributes[.font] = font
         }
-        if run.intent.contains(.strikethrough) {
+
+        func appendCell(
+            _ cell: Markdown.Table.Cell, row: Int, column: Int, isHeader: Bool
+        ) {
+            let cellBlock = NSTextTableBlock(
+                table: textTable, startingRow: row, rowSpan: 1,
+                startingColumn: column, columnSpan: max(Int(cell.colspan), 1))
+            cellBlock.setBorderColor(rule)
+            cellBlock.setWidth(1, type: .absoluteValueType, for: .border)
+            cellBlock.setWidth(6 * scale, type: .absoluteValueType, for: .padding)
+            if isHeader {
+                cellBlock.backgroundColor = codeBackground
+            }
+            let block = BlockContext { style in
+                style.textBlocks = [cellBlock]
+                style.alignment = alignment(column)
+            }
+            var context = InlineContext(size: base)
+            context.bold = isHeader
+            renderInlineChildren(of: cell, context: context, block: block, into: output)
+            terminateParagraph(block: block, context: context, into: output)
+        }
+
+        var row = 0
+        for (column, cell) in table.head.cells.enumerated() {
+            appendCell(cell, row: row, column: column, isHeader: true)
+        }
+        row += 1
+        for bodyRow in table.body.rows {
+            for (column, cell) in bodyRow.cells.enumerated() {
+                appendCell(cell, row: row, column: column, isHeader: false)
+            }
+            row += 1
+        }
+    }
+
+    private func renderThematicBreak(into output: NSMutableAttributedString) {
+        let bar = NSTextBlock()
+        bar.backgroundColor = rule
+        bar.setContentWidth(100, type: .percentageValueType)
+        bar.setWidth(8 * scale, type: .absoluteValueType, for: .margin, edge: .minY)
+        bar.setWidth(8 * scale, type: .absoluteValueType, for: .margin, edge: .maxY)
+        let block = BlockContext { style in
+            style.textBlocks = [bar]
+            style.maximumLineHeight = 3
+        }
+        let attributes = attributes(for: InlineContext(size: 2), monospaced: false, block: block)
+        output.append(NSAttributedString(string: "\u{00A0}\n", attributes: attributes))
+    }
+
+    private func renderVerbatim(_ text: String, into output: NSMutableAttributedString) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let block = BlockContext { style in
+            style.paragraphSpacing = 10 * self.scale
+        }
+        var context = InlineContext(size: base)
+        context.color = .secondaryLabelColor
+        let attributes = attributes(for: context, monospaced: false, block: block)
+        output.append(NSAttributedString(string: trimmed + "\n", attributes: attributes))
+    }
+
+    // MARK: - Inline rendering
+
+    private func renderInlineChildren(
+        of parent: Markup, context: InlineContext, block: BlockContext,
+        into output: NSMutableAttributedString
+    ) {
+        let children = Array(parent.children)
+        var skipPrefixOfNext = 0
+        for (index, child) in children.enumerated() {
+            if skipPrefixOfNext > 0, let text = child as? Markdown.Text {
+                let remainder = String(text.string.dropFirst(skipPrefixOfNext))
+                skipPrefixOfNext = 0
+                appendText(remainder, context: context, block: block, into: output)
+                continue
+            }
+            skipPrefixOfNext = 0
+            switch child {
+            case let text as Markdown.Text:
+                appendText(text.string, context: context, block: block, into: output)
+            case is SoftBreak:
+                appendText(" ", context: context, block: block, into: output)
+            case is LineBreak:
+                appendText("\n", context: context, block: block, into: output)
+            case let code as InlineCode:
+                let following = (children.indices.contains(index + 1)
+                    ? children[index + 1] as? Markdown.Text : nil)?.string
+                skipPrefixOfNext = appendInlineCode(
+                    code.code, following: following, context: context, block: block, into: output)
+            case let strong as Strong:
+                var nested = context
+                nested.bold = true
+                renderInlineChildren(of: strong, context: nested, block: block, into: output)
+            case let emphasis as Emphasis:
+                var nested = context
+                nested.italic = true
+                renderInlineChildren(of: emphasis, context: nested, block: block, into: output)
+            case let strikethrough as Strikethrough:
+                var nested = context
+                nested.strikethrough = true
+                renderInlineChildren(of: strikethrough, context: nested, block: block, into: output)
+            case let link as Markdown.Link:
+                var nested = context
+                nested.link = link.destination.flatMap(URL.init(string:))
+                nested.color = .linkColor
+                renderInlineChildren(of: link, context: nested, block: block, into: output)
+            case let image as Markdown.Image:
+                appendText(image.plainText, context: context, block: block, into: output)
+            case let html as InlineHTML:
+                appendText(html.rawHTML, context: context, block: block, into: output)
+            default:
+                appendText(child.format(), context: context, block: block, into: output)
+            }
+        }
+    }
+
+    private func appendText(
+        _ text: String, context: InlineContext, block: BlockContext,
+        into output: NSMutableAttributedString
+    ) {
+        guard !text.isEmpty else { return }
+        let attributes = attributes(for: context, monospaced: false, block: block)
+        output.append(NSAttributedString(string: text, attributes: attributes))
+    }
+
+    /// Renders one inline code span. When the span plus the text following it
+    /// form a file reference (`path[:line]` @sha), it becomes an editor link
+    /// with the SHA hidden behind the hover help tag; returns how many
+    /// characters of the following text were consumed.
+    private func appendInlineCode(
+        _ code: String, following: String?, context: InlineContext, block: BlockContext,
+        into output: NSMutableAttributedString
+    ) -> Int {
+        if let reference = HandoffDocument.inlineFileReference(code: code, following: following) {
+            let link = FileLink(
+                path: reference.path, line: reference.line,
+                endLine: reference.endLine, sha: reference.sha)
+            var attributes: [NSAttributedString.Key: Any] = [
+                .font: font(size: context.size * 0.85, bold: true, italic: false, monospaced: true),
+                .foregroundColor: NSColor.linkColor,
+                .toolTip: link.helpText,
+                .underlineStyle: 0,
+                .paragraphStyle: block.style,
+            ]
+            for (key, value) in block.extra {
+                attributes[key] = value
+            }
+            if let url = link.url {
+                attributes[.link] = url
+            }
+            output.append(NSAttributedString(string: link.pathWithLine, attributes: attributes))
+            if let sha = reference.sha, let following, following.hasPrefix(" @\(sha)") {
+                return 2 + sha.count
+            }
+            return 0
+        }
+        var attributes = attributes(for: context, monospaced: true, block: block)
+        attributes[.backgroundColor] = codeBackground
+        attributes[.font] = font(
+            size: context.size * 0.85, bold: context.bold, italic: context.italic, monospaced: true)
+        output.append(NSAttributedString(string: code, attributes: attributes))
+        return 0
+    }
+
+    /// Ends the current paragraph with a newline carrying the same paragraph
+    /// style, so text blocks (fills, borders, table cells) close correctly.
+    private func terminateParagraph(
+        block: BlockContext, context: InlineContext, into output: NSMutableAttributedString
+    ) {
+        let attributes = attributes(for: context, monospaced: false, block: block)
+        output.append(NSAttributedString(string: "\n", attributes: attributes))
+    }
+
+    // MARK: - Attributes
+
+    private func attributes(
+        for context: InlineContext, monospaced: Bool, block: BlockContext
+    ) -> [NSAttributedString.Key: Any] {
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: font(
+                size: monospaced ? context.size * 0.85 : context.size,
+                bold: context.bold, italic: context.italic, monospaced: monospaced),
+            .foregroundColor: context.color,
+            .paragraphStyle: block.style,
+        ]
+        if context.strikethrough {
             attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
-        if let link = run.link {
+        if let link = context.link {
             attributes[.link] = link
             attributes[.foregroundColor] = NSColor.linkColor
         }
-        output.append(NSAttributedString(string: run.text, attributes: attributes))
+        for (key, value) in block.extra {
+            attributes[key] = value
+        }
+        return attributes
+    }
+
+    private func font(size: CGFloat, bold: Bool, italic: Bool, monospaced: Bool) -> NSFont {
+        var font = monospaced
+            ? NSFont.monospacedSystemFont(ofSize: size, weight: bold ? .semibold : .regular)
+            : NSFont.systemFont(ofSize: size, weight: bold ? .bold : .regular)
+        if italic {
+            let descriptor = font.fontDescriptor.withSymbolicTraits(.italic)
+            font = NSFont(descriptor: descriptor, size: size) ?? font
+        }
+        return font
     }
 }

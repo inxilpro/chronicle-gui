@@ -64,11 +64,14 @@ nonisolated struct HandoffFileTransfer: Transferable {
 nonisolated extension SourceHealth {
     var statusValue: SourceStatus? { SourceStatus(rawValue: status) }
 
+    /// The `claude` source is whichever agent runs the skill and the
+    /// `chronicle` source is the IDE plugin; the wire names are part of the
+    /// skill contract, so only the labels say "Agent" and "IDE".
     var displayName: String {
         switch source {
         case SourceName.tuple: "Tuple"
-        case SourceName.claude: "Claude"
-        case SourceName.chronicle: "Chronicle"
+        case SourceName.claude: "Agent"
+        case SourceName.chronicle: "IDE"
         default: source.capitalized
         }
     }

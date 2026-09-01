@@ -139,13 +139,18 @@ public struct HandoffDocument: Sendable, Equatable {
             sha: parsed.sha, headingPath: [])
     }
 
-    /// Heading path exact match, then the first exact substring match of the
-    /// snippet before the next same-or-higher heading.
+    /// Heading path match, then the first exact substring match of the snippet
+    /// before the next same-or-higher heading. The reference may omit ancestor
+    /// headings (typically the document title): a heading matches when its full
+    /// path ends with the referenced components.
     public func resolve(_ reference: DocumentReference) -> ResolvedLocation? {
         let target = reference.heading.map { $0.trimmingCharacters(in: .whitespaces) }
+        guard !target.isEmpty else { return nil }
         for (index, block) in blocks.enumerated() where block.isHeading {
             let path = block.headingPath.map { $0.trimmingCharacters(in: .whitespaces) }
-            guard path == target, let level = block.level else { continue }
+            guard path.count >= target.count, path.suffix(target.count).elementsEqual(target),
+                let level = block.level
+            else { continue }
             var sectionEnd = strippedMarkdown.utf16.count
             for next in blocks[(index + 1)...] where next.isHeading {
                 if let nextLevel = next.level, nextLevel <= level {

@@ -1,12 +1,12 @@
 import SwiftUI
 import ChronicleKit
 
-/// Quiet single-line row for `ack` messages; always read.
+/// Quiet single-line row for `ack` messages; always read, never selectable.
 struct AckRow: View {
     var message: ChatMessage
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: "info.circle")
                 .foregroundStyle(.tertiary)
                 .imageScale(.small)
@@ -29,32 +29,33 @@ struct AckRow: View {
 /// Bubble row for plain `message` messages.
 struct MessageRow: View {
     var message: ChatMessage
+    var isSelected: Bool
     var isStale: Bool
     var onOpenReference: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(inlineMarkdown(message.text))
-                    .textSelection(.enabled)
                 Spacer(minLength: 8)
                 if !message.read {
                     NewPill()
                 }
-            }
-            HStack(spacing: 8) {
-                if let reference = message.reference {
-                    ReferenceChip(reference: reference, isStale: isStale, action: onOpenReference)
-                }
-                Spacer(minLength: 0)
                 Text(TimestampFormat.time(message.timestamp))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
             }
+            if let reference = message.reference, !isStale {
+                ReferenceChip(reference: reference, action: onOpenReference)
+            }
         }
         .padding(10)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 1.5)
+        )
         .padding(.vertical, 2)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
@@ -62,12 +63,13 @@ struct MessageRow: View {
     }
 }
 
-/// Card row for `decision` messages with the Approve/Reject confirmation surface.
+/// Card row for `decision` messages. Unreviewed cards carry the Approve/Reject
+/// surface; reviewed cards keep their box but drop the buttons and status line,
+/// fading behind a state icon and title instead.
 struct DecisionRow: View {
     var message: ChatMessage
     var status: DecisionStatus
-    var isPending: Bool
-    var pendingStatus: DecisionStatus?
+    var isSelected: Bool
     var isStale: Bool
     var onApprove: () -> Void
     var onReject: () -> Void
@@ -76,10 +78,9 @@ struct DecisionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("◆")
-                    .foregroundStyle(Color.accentColor)
+                statusIcon
                     .accessibilityHidden(true)
-                Text("Decision requested")
+                Text(FeedFormat.decisionTitle(status))
                     .font(.headline)
                 Spacer(minLength: 8)
                 if !message.read && status == .unreviewed {
@@ -91,52 +92,54 @@ struct DecisionRow: View {
                     .monospacedDigit()
             }
             Text(inlineMarkdown(message.text))
-                .textSelection(.enabled)
-            if let reference = message.reference {
-                ReferenceChip(reference: reference, isStale: isStale, action: onOpenReference)
+            if let reference = message.reference, !isStale {
+                ReferenceLink(reference: reference, action: onOpenReference)
             }
-            footer
+            if status == .unreviewed {
+                HStack(spacing: 8) {
+                    Button("Approve", action: onApprove)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .accessibilityLabel("Approve decision")
+                    Button("Reject", action: onReject)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityLabel("Reject decision")
+                }
+            }
         }
         .padding(12)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(
-                    status == .unreviewed ? Color.accentColor.opacity(0.5) : Color.clear,
-                    lineWidth: 1)
+                .strokeBorder(borderColor, lineWidth: isSelected ? 1.5 : 1)
         )
         .padding(.vertical, 2)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilitySummary)
     }
 
+    /// Unreviewed keeps the accent diamond that asks for action; approved fades
+    /// to a gray check (green still reads as a call to action); rejected gets a
+    /// red X because a rejection is worth spotting when scrolling back.
     @ViewBuilder
-    private var footer: some View {
-        switch (status, isPending, pendingStatus) {
-        case (.unreviewed, true, let pending):
-            Text(pending == .rejected ? "Rejecting…" : "Approving…")
-                .font(.callout)
+    private var statusIcon: some View {
+        switch status {
+        case .unreviewed:
+            Text("◆")
+                .foregroundStyle(Color.accentColor)
+        case .approved:
+            Image(systemName: "checkmark.square")
                 .foregroundStyle(.secondary)
-        case (.unreviewed, false, _):
-            HStack(spacing: 8) {
-                Button("Approve", action: onApprove)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .accessibilityLabel("Approve decision")
-                Button("Reject", action: onReject)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .accessibilityLabel("Reject decision")
-            }
-        case (.approved, _, _):
-            Text("Approved ✓")
-                .font(.callout.weight(.medium))
-                .foregroundStyle(.green)
-        case (.rejected, _, _):
-            Text("Rejected ×")
-                .font(.callout.weight(.medium))
-                .foregroundStyle(.orange)
+        case .rejected:
+            Image(systemName: "xmark.square.fill")
+                .foregroundStyle(.red)
         }
+    }
+
+    private var borderColor: Color {
+        if isSelected { return Color.accentColor }
+        return status == .unreviewed ? Color.accentColor.opacity(0.5) : .clear
     }
 
     private var accessibilitySummary: String {
@@ -162,26 +165,19 @@ struct NewPill: View {
 }
 
 /// Shows the last heading segment plus a snippet; clicking scrolls the handoff
-/// pane. Unresolvable references render stale and non-interactive.
+/// pane. Unresolvable references are hidden by the rows (the stale report to
+/// the skill unlinks them) rather than rendered broken.
 struct ReferenceChip: View {
     var reference: DocumentReference
-    var isStale: Bool
     var action: () -> Void
 
     var body: some View {
-        if isStale {
+        Button(action: action) {
             chipLabel
-                .foregroundStyle(.tertiary)
-                .help("This part of the handoff has changed; the reference no longer resolves.")
-                .accessibilityLabel("Stale reference: \(headingText)")
-        } else {
-            Button(action: action) {
-                chipLabel
-            }
-            .buttonStyle(.plain)
-            .help("Show in the planning handoff")
-            .accessibilityLabel("Reference: \(headingText)")
         }
+        .buttonStyle(.plain)
+        .help("Show in the planning handoff")
+        .accessibilityLabel("Reference: \(headingText)")
     }
 
     private var headingText: String {
@@ -190,7 +186,7 @@ struct ReferenceChip: View {
 
     private var chipLabel: some View {
         HStack(spacing: 4) {
-            Image(systemName: isStale ? "text.badge.xmark" : "text.quote")
+            Image(systemName: "text.quote")
                 .imageScale(.small)
             Text(headingText)
                 .fontWeight(.medium)
@@ -205,5 +201,25 @@ struct ReferenceChip: View {
         .background(.quaternary, in: Capsule())
         .frame(maxWidth: 260, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Quiet dotted-underline link on decision cards. Selecting the card is the
+/// primary way to jump to the notes; this is the visible hint and the re-click
+/// affordance once the card is already selected.
+struct ReferenceLink: View {
+    var reference: DocumentReference
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(reference.heading.last ?? "Handoff")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .underline(pattern: .dot)
+        }
+        .buttonStyle(.plain)
+        .help("Show in the planning handoff")
+        .accessibilityLabel("Reference: \(reference.heading.last ?? "Handoff")")
     }
 }

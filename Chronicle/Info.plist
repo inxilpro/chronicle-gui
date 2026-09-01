@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>SUFeedURL</key>
-	<string>https://github.com/inxilpro/chronicle/releases/latest/download/appcast.xml</string>
+	<string>https://github.com/inxilpro/chronicle-gui/releases/latest/download/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>REPLACE_WITH_SPARKLE_ED_PUBLIC_KEY</string>
 	<key>SUEnableAutomaticChecks</key>

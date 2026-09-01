@@ -5,7 +5,7 @@ builds, signs, notarizes, staples, packages, generates the Sparkle appcast, and
 publishes everything to the GitHub Release for that tag. Before the first
 release, complete the one-time setup below.
 
-> The repository is assumed to be `inxilpro/chronicle`. If it lives elsewhere,
+> The repository is assumed to be `inxilpro/chronicle-gui`. If it lives elsewhere,
 > update the `SUFeedURL` in `Chronicle/Info.plist` and the
 > `--download-url-prefix` in `.github/workflows/release.yml`.
 
@@ -94,7 +94,7 @@ CI run; any random value is fine.
 `Chronicle/Info.plist` sets:
 
 ```
-SUFeedURL = https://github.com/inxilpro/chronicle/releases/latest/download/appcast.xml
+SUFeedURL = https://github.com/inxilpro/chronicle-gui/releases/latest/download/appcast.xml
 ```
 
 GitHub's `releases/latest/download/<asset>` URL always redirects to the asset
@@ -140,7 +140,7 @@ configuration changes:
    ```sh
    codesign --verify --deep --strict --verbose=2 /Applications/Chronicle.app
    spctl -a -t exec -vv /Applications/Chronicle.app
-   curl -sL https://github.com/inxilpro/chronicle/releases/latest/download/appcast.xml
+   curl -sL https://github.com/inxilpro/chronicle-gui/releases/latest/download/appcast.xml
    ```
 
    The appcast should describe the released version, and its

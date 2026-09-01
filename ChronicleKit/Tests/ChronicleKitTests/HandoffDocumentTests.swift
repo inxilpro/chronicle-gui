@@ -76,8 +76,13 @@ import Testing
         let second = document.resolve(
             DocumentReference(heading: ["Plan", "Storage"], snippet: "Second storage section."))
         #expect(second?.anchor == "plan--storage-2")
+        // A trailing subset of the path resolves; the skill usually omits the
+        // document title (the live-call reference_stale bug of 2026-09-01).
+        let suffix = document.resolve(DocumentReference(heading: ["Storage"], snippet: "SQLite"))
+        #expect(suffix?.anchor == "plan--storage")
         // Wrong heading path does not resolve.
-        #expect(document.resolve(DocumentReference(heading: ["Storage"], snippet: "SQLite")) == nil)
+        #expect(document.resolve(DocumentReference(heading: ["Rollout", "Storage"], snippet: "SQLite")) == nil)
+        #expect(document.resolve(DocumentReference(heading: [], snippet: "SQLite")) == nil)
         #expect(document.resolve(DocumentReference(heading: ["Plan"], snippet: "missing text")) == nil)
     }
 

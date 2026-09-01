@@ -33,6 +33,16 @@ struct ContentView: View {
             Text(model.actionError ?? "")
         }
         .confirmationDialog(
+            model.endSessionPrompt,
+            isPresented: $model.confirmEndSession,
+            titleVisibility: .visible
+        ) {
+            Button(model.snapshot.sessionState == .finalizing ? "Finish Session" : "End Session") {
+                model.endSession()
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(
             "Delete this Chronicle session and its internal handoff? Saved copies are not affected.",
             isPresented: $model.confirmDeleteSession,
             titleVisibility: .visible

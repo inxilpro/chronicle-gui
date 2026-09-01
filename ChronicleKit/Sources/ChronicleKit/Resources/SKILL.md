@@ -246,6 +246,11 @@ When the room appears to settle a decision:
 Decision IDs contain no whitespace and must remain unique within the session.
 Do not post a card merely because someone conceded a point.
 
+`--ref-heading` matches the trailing components of the heading path, so you may
+omit ancestors such as the document title: `"Decisions>Retry placement"` finds
+`### Retry placement` under `## Decisions` even inside a titled document. The
+snippet must still appear verbatim within that section.
+
 Chronicle emits these review events through `show`:
 
 - `decision_approved`: locate `<!-- chronicle-decision: <decisionId> -->` and
@@ -254,6 +259,11 @@ Chronicle emits these review events through `show`:
   feedback; listen to the room's spoken explanation. If the room later settles
   a revision, rewrite the entry, replace the marker with a new revision ID, set
   status to `unreviewed`, and post a new card. The rejected chat card remains.
+- `message_selected`: someone selected that card in the review feed. The
+  payload carries the full message (text, kind, status, file refs) plus its
+  document location, so you know which entry the room is discussing — use it
+  to correlate what they are saying ("the third one down") with the handoff.
+  It requires no reply and no document change.
 - `reference_stale`: remove only the pointer by running:
 
 ```sh
@@ -313,7 +323,10 @@ instead of pretending the app received it.
 
 ## Finish
 
-When Tuple emits `call_ended`, the session becomes `finalizing`:
+When Tuple emits `call_ended`, the session becomes `finalizing`. Tuple does not
+always deliver that record; Chronicle also emits `call_ended` on its own about
+fifteen seconds after Tuple reports no longer being in a call, and the user can
+force it with End Session in the app — treat all three identically. Then:
 
 1. Drain remaining events with non-waiting `show` calls while `hasMore` is
    true.

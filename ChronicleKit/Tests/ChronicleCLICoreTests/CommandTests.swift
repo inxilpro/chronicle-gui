@@ -211,7 +211,7 @@ private func json(_ text: String) throws -> [String: Any] {
         _ = try run(["session", "attach", "--repo", home.repo], context: context)
         #expect(
             runError(["session", "finish"], context: context)?.message
-                == "Tuple call is still active; finish after Chronicle reports finalizing")
+                == "Tuple call is still active; finish after Chronicle reports finalizing. If the call has already ended, choose Session > End Session in the Chronicle app, then finish.")
         try home.store.markCallEnded("tuple-call-1")
         let output = try run(["session", "finish"], context: context)
         #expect(output == "{\"sessionId\":\"tuple-call-1\",\"state\":\"complete\"}")

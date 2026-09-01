@@ -184,6 +184,10 @@ struct ShowCommand: ParsableCommand, ChronicleExecutable {
             // events, not only Tuple's long poll.
             let deadline = context.now().addingTimeInterval(Double(timeoutMilliseconds) / 1000)
             while true {
+                // Events another process already collected deliver instantly.
+                if try context.store.hasUndeliveredEvents(sessionId: session.id, consumer: cursor) {
+                    break
+                }
                 let remaining = deadline.timeIntervalSince(context.now())
                 if remaining <= 0 { break }
                 let passMilliseconds = max(1, min(Int(remaining * 1000), 2000))

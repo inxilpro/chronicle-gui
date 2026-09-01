@@ -74,7 +74,7 @@ public enum IDEIngestion {
         case (_, .none):
             try store.setSourceState(
                 sessionId: session.id, source: SourceName.chronicle, status: "ambiguous",
-                detail: "Multiple Chronicle sessions match this repository.")
+                detail: "Multiple IDE sessions match this repository.")
         }
     }
 

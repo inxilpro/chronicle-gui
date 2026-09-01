@@ -251,7 +251,11 @@ public final class ChronicleStore: Sendable {
         }
     }
 
-    public func clearTerminalSelectionForLaunch() throws {
+    /// Puts away a selected complete/interrupted session so the app returns to
+    /// the waiting screen; the next Tuple call starts a fresh session. Runs at
+    /// launch and behind the app's Close Session action. Never touches an
+    /// active or finalizing selection.
+    public func deselectTerminalSession() throws {
         try write { db in
             try db.execute(
                 sql: """
@@ -307,16 +311,77 @@ public final class ChronicleStore: Sendable {
     public func markCallEnded(_ sessionId: String) throws {
         let timestamp = ChronicleTimestamp.now()
         try write { db in
-            try db.execute(
-                sql: """
-                    UPDATE sessions SET state = 'finalizing', call_ended_at = ?, updated_at = ?
-                    WHERE id = ? AND state = 'active'
-                    """,
-                arguments: [timestamp, timestamp, sessionId])
-            try Self.upsertSourceState(
-                db, sessionId: sessionId, source: SourceName.tuple,
-                status: "ended", detail: "Call ended. Claude is finishing the handoff.",
-                cursorJson: nil, timestamp: timestamp)
+            try Self.markCallEnded(db, sessionId: sessionId, timestamp: timestamp)
+        }
+    }
+
+    /// Ends the call when Tuple never delivered its explicit `call_ended`
+    /// record — inferred disappearance of the call, or the user choosing
+    /// End Session. Emits the synthetic `call_ended` event the skill waits
+    /// for; the shared `tuple:call-ended` stable ID dedupes against a real
+    /// record arriving later.
+    public func endCallWithoutTupleRecord(_ sessionId: String, reason: String) throws {
+        let timestamp = ChronicleTimestamp.now()
+        try write { db in
+            let state = try String.fetchOne(
+                db, sql: "SELECT state FROM sessions WHERE id = ?", arguments: [sessionId])
+            guard state == "active" else { return }
+            try Self.insertEvent(
+                db, sessionId: sessionId,
+                event: NormalizedEvent(
+                    stableId: "tuple:call-ended", source: SourceName.tuple,
+                    occurredAt: timestamp, observedAt: timestamp,
+                    kind: "call_ended",
+                    payload: .object([
+                        "kind": .string("status"),
+                        "status": .string("call_ended"),
+                        "reason": .string(reason),
+                    ])))
+            try Self.markCallEnded(db, sessionId: sessionId, timestamp: timestamp)
+        }
+    }
+
+    private static func markCallEnded(_ db: Database, sessionId: String, timestamp: String) throws {
+        try db.execute(
+            sql: """
+                UPDATE sessions SET state = 'finalizing', call_ended_at = ?, updated_at = ?
+                WHERE id = ? AND state = 'active'
+                """,
+            arguments: [timestamp, timestamp, sessionId])
+        try upsertSourceState(
+            db, sessionId: sessionId, source: SourceName.tuple,
+            status: "ended", detail: "Call ended. The agent is finishing the handoff.",
+            cursorJson: nil, timestamp: timestamp)
+    }
+
+    /// Called on every collect pass where Tuple reports not being in a call
+    /// while this session is still active. The first observation starts a
+    /// grace timer; once it has run continuously past `gracePeriod`, the call
+    /// end is inferred (Tuple sometimes never emits `call_ended`, as in the
+    /// 2026-09-01 live session).
+    public func recordTupleCallMissing(
+        sessionId: String, gracePeriod: TimeInterval = 15, now: Date = Date()
+    ) throws {
+        let key = "tuple_call_missing"
+        if let value = try setting(key) {
+            let parts = value.split(separator: "|", maxSplits: 1).map(String.init)
+            if parts.count == 2, parts[1] == sessionId,
+                let since = ChronicleTimestamp.date(from: parts[0])
+            {
+                if now.timeIntervalSince(since) >= gracePeriod {
+                    try endCallWithoutTupleRecord(sessionId, reason: "tuple_reported_no_call")
+                    try setSetting(key, to: nil)
+                }
+                return
+            }
+        }
+        try setSetting(key, to: "\(ChronicleTimestamp.string(from: now))|\(sessionId)")
+    }
+
+    public func clearTupleCallMissing() throws {
+        // Skip the write on the (usual) pass where no timer is running.
+        if try setting("tuple_call_missing") != nil {
+            try setSetting("tuple_call_missing", to: nil)
         }
     }
 
@@ -334,7 +399,7 @@ public final class ChronicleStore: Sendable {
             switch try session(sessionId).state {
             case .active:
                 throw ChronicleError(
-                    "Tuple call is still active; finish after Chronicle reports finalizing")
+                    "Tuple call is still active; finish after Chronicle reports finalizing. If the call has already ended, choose Session > End Session in the Chronicle app, then finish.")
             case .complete:
                 throw ChronicleError("session is already complete")
             case .interrupted:
@@ -394,6 +459,19 @@ public final class ChronicleStore: Sendable {
 
     public func setTupleDiscoveryError(_ error: String?) throws {
         try setSetting("tuple_discovery_error", to: error)
+    }
+
+    /// The Tuple call the waiting screen's Start Session button would join;
+    /// maintained by the collector, non-nil only while no session exists.
+    public func availableTupleCall() throws -> String? {
+        try setting("tuple_available_call")
+    }
+
+    public func setAvailableTupleCall(_ callId: String?) throws {
+        // Skip the write on the (usual) pass where nothing changed.
+        if try setting("tuple_available_call") != callId {
+            try setSetting("tuple_available_call", to: callId)
+        }
     }
 
     public func tupleDiscoveryError() throws -> String? {
@@ -469,6 +547,26 @@ public final class ChronicleStore: Sendable {
                 sql: "UPDATE sessions SET updated_at = ? WHERE id = ?",
                 arguments: [ChronicleTimestamp.now(), sessionId])
             return inserted
+        }
+    }
+
+    /// The chronologically latest event for one source, for freshness checks
+    /// like gap escalation.
+    public func latestSourceEvent(
+        sessionId: String, source: String
+    ) throws -> (kind: String, occurredAt: String, observedAt: String)? {
+        try read { db in
+            guard
+                let row = try Row.fetchOne(
+                    db,
+                    sql: """
+                        SELECT kind, occurred_at, observed_at FROM source_events
+                        WHERE session_id = ? AND source = ?
+                        ORDER BY occurred_at DESC, sequence DESC LIMIT 1
+                        """,
+                    arguments: [sessionId, source])
+            else { return nil }
+            return (row["kind"], row["occurred_at"], row["observed_at"])
         }
     }
 
@@ -864,6 +962,57 @@ public final class ChronicleStore: Sendable {
         }
     }
 
+    /// Selecting a feed item tells the skill which card the room is discussing.
+    /// The payload carries the full message plus its document location so the
+    /// skill can correlate speech with it without another lookup. Each
+    /// selection is a distinct event; only same-millisecond repeats dedupe.
+    public func reportSelection(sessionId: String, message: ChatMessage) throws {
+        let timestamp = ChronicleTimestamp.now()
+        try write { db in
+            let exists = try Bool.fetchOne(
+                db,
+                sql: "SELECT EXISTS(SELECT 1 FROM chat_messages WHERE session_id = ? AND id = ?)",
+                arguments: [sessionId, message.id]) ?? false
+            guard exists else {
+                throw ChronicleError("message not found: \(message.id)")
+            }
+            var payload: [String: JSONValue] = [
+                "messageId": .string(message.id),
+                "kind": .string(message.kind.rawValue),
+                "text": .string(message.text),
+                "timestamp": .string(message.timestamp),
+            ]
+            if let status = message.decisionStatus {
+                payload["decisionStatus"] = .string(status.rawValue)
+            }
+            if let reference = message.reference {
+                payload["reference"] = .object([
+                    "heading": .array(reference.heading.map(JSONValue.string)),
+                    "snippet": .string(reference.snippet),
+                ])
+            }
+            if !message.files.isEmpty {
+                payload["files"] = .array(
+                    message.files.map { file in
+                        var entry: [String: JSONValue] = [
+                            "path": .string(file.path),
+                            "sha": .string(file.sha),
+                        ]
+                        if let line = file.line { entry["line"] = .number(Double(line)) }
+                        if let endLine = file.endLine { entry["endLine"] = .number(Double(endLine)) }
+                        return .object(entry)
+                    })
+            }
+            try Self.insertEvent(
+                db, sessionId: sessionId,
+                event: NormalizedEvent(
+                    stableId: "selection:\(message.id):\(timestamp)", source: SourceName.chronicle,
+                    occurredAt: timestamp, observedAt: timestamp,
+                    kind: "message_selected",
+                    payload: .object(payload)))
+        }
+    }
+
     // MARK: - IDE candidates
 
     public func replaceIDECandidates(sessionId: String, candidates: [IDESessionCandidate]) throws {
@@ -935,18 +1084,26 @@ public final class ChronicleStore: Sendable {
             atPath: ideRoot.appendingPathComponent("sessions.json").path)
         guard let session else {
             let tupleError = try tupleDiscoveryError()
+            let availableCall = try availableTupleCall()
+            let tupleHealth: SourceHealth =
+                if let tupleError {
+                    Self.health(SourceName.tuple, "error", tupleError)
+                } else if availableCall != nil {
+                    SourceHealth(source: SourceName.tuple, status: .connected, detail: "In a Tuple call.")
+                } else {
+                    Self.health(SourceName.tuple, "waiting", "Waiting for a Tuple call…")
+                }
             return AppSnapshot(
                 mode: .waitingCall,
                 sources: [
-                    Self.health(
-                        SourceName.tuple, tupleError != nil ? "error" : "waiting",
-                        tupleError ?? "Waiting for a Tuple call…"),
+                    tupleHealth,
                     SourceHealth(source: SourceName.claude, status: .waiting),
                     SourceHealth(source: SourceName.chronicle, status: .off),
                 ],
                 sessions: sessions,
                 ideRoot: ideRoot.path, ideRegistryFound: registryFound,
-                integrationInstalled: integrationInstalled())
+                integrationInstalled: integrationInstalled(),
+                availableCallId: availableCall)
         }
         let markdown: String
         do {

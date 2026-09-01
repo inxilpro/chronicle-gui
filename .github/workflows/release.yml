@@ -215,10 +215,10 @@ jobs:
           cp "$RUNNER_TEMP/artifacts/Chronicle-$VERSION.zip" "$UPDATES_DIR/"
 
           # NOTE: change the download-url prefix if the repository moves from
-          # inxilpro/chronicle.
+          # inxilpro/chronicle-gui.
           echo "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/generate_appcast" \
             --ed-key-file - \
-            --download-url-prefix "https://github.com/inxilpro/chronicle/releases/download/${GITHUB_REF_NAME}/" \
+            --download-url-prefix "https://github.com/inxilpro/chronicle-gui/releases/download/${GITHUB_REF_NAME}/" \
             "$UPDATES_DIR"
 
           cp "$UPDATES_DIR/appcast.xml" "$RUNNER_TEMP/artifacts/appcast.xml"

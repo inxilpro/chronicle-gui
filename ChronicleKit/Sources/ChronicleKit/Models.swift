@@ -263,6 +263,8 @@ public struct AppSnapshot: Codable, Sendable, Equatable {
     public var ideRegistryFound: Bool
     public var integrationInstalled: Bool
     public var handoffSaved: Bool
+    /// In `waitingCall` mode, the Tuple call a Start Session action would join.
+    public var availableCallId: String?
 
     public init(
         mode: AppMode, sessionId: String? = nil, sessionState: SessionState? = nil,
@@ -270,7 +272,8 @@ public struct AppSnapshot: Codable, Sendable, Equatable {
         messages: [ChatMessage] = [], sources: [SourceHealth] = [],
         sessions: [SessionSummary] = [], ideCandidates: [IDESessionCandidate] = [],
         ideRoot: String = "", ideRegistryFound: Bool = false,
-        integrationInstalled: Bool = false, handoffSaved: Bool = false
+        integrationInstalled: Bool = false, handoffSaved: Bool = false,
+        availableCallId: String? = nil
     ) {
         self.mode = mode
         self.sessionId = sessionId
@@ -286,5 +289,6 @@ public struct AppSnapshot: Codable, Sendable, Equatable {
         self.ideRegistryFound = ideRegistryFound
         self.integrationInstalled = integrationInstalled
         self.handoffSaved = handoffSaved
+        self.availableCallId = availableCallId
     }
 }

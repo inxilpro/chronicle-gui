@@ -52,7 +52,26 @@ struct HandoffPane: View {
                     .help("Copy the handoff as Markdown and rich text")
                 Button("Save As…") { model.saveHandoffAs() }
                     .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
                     .disabled(!model.hasHandoffContent)
+                    .help("Save the handoff as a Markdown file")
+                Button("Close Session") { model.closeSession() }
+                    .controlSize(.small)
+                    .help("Put this session away and wait for the next Tuple call. It stays in History.")
+            } else if model.sessionCanEnd {
+                // Ending shouldn't depend on the Tuple call ending — a subtle,
+                // always-visible control in the header, mirroring Session ▸
+                // End Session… (⇧⌘E).
+                Button(
+                    model.snapshot.sessionState == .finalizing ? "Finish Session…" : "End Session…"
+                ) {
+                    model.confirmEndSession = true
+                }
+                .controlSize(.small)
+                .help(
+                    model.snapshot.sessionState == .finalizing
+                        ? "Mark the handoff complete without waiting for the agent"
+                        : "Tell the agent to stop following the call and finalize the handoff")
             }
         }
         .padding(.horizontal, 14)

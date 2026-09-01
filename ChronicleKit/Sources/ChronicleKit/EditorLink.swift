@@ -129,10 +129,20 @@ public enum FeedFormat {
         return count > 99 ? "99+" : String(count)
     }
 
+    /// Decision card titles reflect review state so a reviewed card never
+    /// keeps reading "Decision requested".
+    public static func decisionTitle(_ status: DecisionStatus) -> String {
+        switch status {
+        case .unreviewed: "Decision requested"
+        case .approved: "Decision approved"
+        case .rejected: "Decision rejected"
+        }
+    }
+
     public static func coalescedMessageBody(_ count: Int) -> String {
         count == 1
-            ? "Claude added a new review note."
-            : "Claude added \(count) new review notes."
+            ? "The agent added a new review note."
+            : "The agent added \(count) new review notes."
     }
 
     /// "heading › path — snippet" for the Copy Reference affordance.

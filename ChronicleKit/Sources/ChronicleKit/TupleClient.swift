@@ -76,7 +76,13 @@ public final class TupleClient: TupleCalling {
             throw ChronicleError("cannot open \(lockURL.path): \(String(cString: strerror(errno)))")
         }
         defer { close(descriptor) }
-        guard flock(descriptor, LOCK_EX) == 0 else {
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            if errno == EWOULDBLOCK {
+                // Another Chronicle process (GUI collector or CLI) is already
+                // long-polling this call into the shared database and cursor;
+                // waiting up to 2s behind its poll only adds latency.
+                return
+            }
             throw ChronicleError("cannot lock \(lockURL.path): \(String(cString: strerror(errno)))")
         }
         defer { flock(descriptor, LOCK_UN) }
@@ -126,6 +132,27 @@ public final class TupleClient: TupleCalling {
         if batch.callEnded {
             try store.markCallEnded(session.id)
         }
+        try Self.escalatePersistentGap(store: store, session: session)
+    }
+
+    /// A `transcription_dropped` only surfaces as a stopped source when it is
+    /// still the latest Tuple record after this grace period; speech resuming
+    /// (or Tuple's own lifecycle records) clears it silently.
+    static let gapGracePeriod: TimeInterval = 30
+
+    static func escalatePersistentGap(
+        store: ChronicleStore, session: SessionRecord, now: Date = Date()
+    ) throws {
+        guard let latest = try store.latestSourceEvent(sessionId: session.id, source: SourceName.tuple),
+            latest.kind == "transcription_dropped",
+            let observed = ChronicleTimestamp.date(from: latest.observedAt),
+            now.timeIntervalSince(observed) >= gapGracePeriod,
+            try store.sourceState(sessionId: session.id, source: SourceName.tuple)?.status == "live"
+        else { return }
+        try store.setSourceState(
+            sessionId: session.id, source: SourceName.tuple, status: "stopped",
+            detail:
+                "Tuple reported a transcription gap that has not recovered. Chronicle will not restart it automatically.")
     }
 
     // MARK: - Process handling
@@ -201,6 +228,9 @@ public final class TupleClient: TupleCalling {
         return [
             "transcription is not running", "transcription not running", "no transcription",
             "no recording", "capture is not running", "capture not running", "not transcribing",
+            // A call that is still connecting exists in `tuple call current`
+            // before Tuple's transcription store has a record for it.
+            "no stored call matching",
         ].contains(where: detail.contains)
     }
 
@@ -296,7 +326,7 @@ enum TupleRecordParser {
                 if record["status"]?.stringValue == "call_ended" {
                     batch.callEnded = true
                     batch.status = TupleStatusUpdate(
-                        status: "ended", detail: "Call ended. Claude is finishing the handoff.")
+                        status: "ended", detail: "Call ended. The agent is finishing the handoff.")
                     batch.events.append(
                         NormalizedEvent(
                             stableId: "tuple:call-ended", source: SourceName.tuple,
@@ -345,10 +375,10 @@ enum TupleRecordParser {
             case "transcription_finished", "transcription_started", "recording_started":
                 batch.status = TupleStatusUpdate(status: "live", detail: "Transcription is live.")
             case "transcription_dropped":
-                batch.status = TupleStatusUpdate(
-                    status: "stopped",
-                    detail:
-                        "Tuple reported a transcription gap. Chronicle will not restart it automatically.")
+                // Brief gaps are routine while Tuple keeps transcribing; the
+                // collector escalates only a gap that persists (see
+                // `TupleClient.escalatePersistentGap`).
+                break
             case "recording_ended", "transcription_ended":
                 batch.status = TupleStatusUpdate(
                     status: "stopped",

@@ -38,13 +38,23 @@ final class AppModel {
 
     var collectorWarning: String?
     var actionError: String?
-    var feedSelection: String?
+    var feedSelection: String? {
+        didSet {
+            guard feedSelection != oldValue else { return }
+            handleFeedSelection()
+        }
+    }
     /// Consumed by the feed to scroll to and select a message.
     var feedScrollTarget: String?
     var handoffCommand: HandoffViewCommand?
     var openMainWindow: (() -> Void)?
     /// Drives the Delete Session… confirmation in the main window.
     var confirmDeleteSession = false
+    /// Drives the End Session… confirmation in the main window.
+    var confirmEndSession = false
+
+    /// What the user pastes into Claude Code to start following the call.
+    static let sessionStartPrompt = "Use the chronicle skill to follow this Tuple planning call."
 
     private(set) var textScale: Double
 
@@ -84,7 +94,7 @@ final class AppModel {
         guard let store else { return }
         // Relaunch after a completed/interrupted session shows the waiting
         // screen; stale actives demote before anything renders.
-        try? store.clearTerminalSelectionForLaunch()
+        try? store.deselectTerminalSession()
         _ = try? store.interruptStaleSessions(olderThan: 12 * 3600)
         refresh()
         startObservation()
@@ -266,7 +276,10 @@ final class AppModel {
             do {
                 // Health failures are persisted by the collector before it
                 // throws; the message only feeds the dismissible banner.
-                try Collector.collectOnce(store: store, tuple: tuple, timeout: "2s")
+                // Sessions start explicitly (Start Session, or the agent's
+                // session attach) — never merely because the app was open.
+                try Collector.collectOnce(
+                    store: store, tuple: tuple, timeout: "2s", startSessions: false)
                 return nil
             } catch {
                 return (error as? ChronicleError)?.message ?? error.localizedDescription
@@ -312,6 +325,24 @@ final class AppModel {
             }
             notifications.removeDelivered(decisionId: decisionId)
             refresh()
+        }
+    }
+
+    /// Selection is an intentional act: it marks the message read, tells the
+    /// skill which card the room is looking at, and — for decision cards —
+    /// jumps the handoff pane to the linked entry.
+    private func handleFeedSelection() {
+        guard let message = selectedMessage, message.kind != .ack else { return }
+        if !message.read {
+            markRead(message.id)
+        }
+        if let store, let sessionId = snapshot.sessionId {
+            try? store.reportSelection(sessionId: sessionId, message: message)
+        }
+        if message.kind == .decision, message.reference != nil,
+            !staleReferenceIDs.contains(message.id)
+        {
+            openReference(message)
         }
     }
 
@@ -418,6 +449,61 @@ final class AppModel {
     func zoomActualSize() { setTextScale(1) }
 
     // MARK: - Sessions
+
+    /// Starts a session for the Tuple call the collector reported available.
+    func startSession() {
+        guard let store, let callId = snapshot.availableCallId else { return }
+        do {
+            _ = try store.createOrResumeSession(callId: callId)
+            try store.setAvailableTupleCall(nil)
+            refresh()
+        } catch {
+            actionError = (error as? ChronicleError)?.message ?? error.localizedDescription
+        }
+    }
+
+    var sessionCanEnd: Bool {
+        snapshot.sessionState == .active || snapshot.sessionState == .finalizing
+    }
+
+    var endSessionPrompt: String {
+        snapshot.sessionState == .finalizing
+            ? "Finish this session now? The handoff will be marked complete without waiting for the agent."
+            : "End this Chronicle session? The agent will stop following the call and finalize the handoff."
+    }
+
+    /// Manual End Session. Active: finalizes the call without waiting for
+    /// Tuple's call_ended record, emitting the synthetic event the skill
+    /// watches for. Finalizing: completes the session so it cannot strand the
+    /// app waiting on an agent that will never finish.
+    func endSession() {
+        guard let store, let sessionId = snapshot.sessionId else { return }
+        do {
+            switch snapshot.sessionState {
+            case .active:
+                try store.endCallWithoutTupleRecord(sessionId, reason: "user_request")
+            case .finalizing:
+                try store.finishSession(sessionId)
+            default:
+                return
+            }
+            refresh()
+        } catch {
+            actionError = (error as? ChronicleError)?.message ?? error.localizedDescription
+        }
+    }
+
+    /// Puts away a finished session and returns to the waiting screen; the
+    /// next Tuple call starts fresh. The session stays in History.
+    func closeSession() {
+        guard let store, sessionIsTerminal else { return }
+        do {
+            try store.deselectTerminalSession()
+            refresh()
+        } catch {
+            actionError = (error as? ChronicleError)?.message ?? error.localizedDescription
+        }
+    }
 
     func openHistorySession(_ id: String) {
         guard let store else { return }

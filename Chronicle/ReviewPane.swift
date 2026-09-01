@@ -6,16 +6,35 @@ import ChronicleKit
 struct ReviewPane: View {
     @Bindable var model: AppModel
     @State private var nearBottom = true
+    @State private var feedScrolled = false
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            banners
-            idePicker
+            VStack(spacing: 0) {
+                header
+                banners
+                idePicker
+            }
+            .zIndex(1)
             feed
+                .overlay(alignment: .top) { headerShadow }
             Divider()
             footer
         }
+    }
+
+    /// Casts a soft edge under the header block once the list has scrolled,
+    /// separating it from rows passing beneath.
+    private var headerShadow: some View {
+        LinearGradient(
+            colors: [.black.opacity(0.14), .black.opacity(0)],
+            startPoint: .top, endPoint: .bottom
+        )
+        .frame(height: 5)
+        .opacity(feedScrolled ? 1 : 0)
+        .animation(.easeInOut(duration: 0.15), value: feedScrolled)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     // MARK: - Header
@@ -25,7 +44,7 @@ struct ReviewPane: View {
             Text("Review")
                 .font(.title3.weight(.semibold))
                 .accessibilityHeading(.h2)
-            Text(model.snapshot.mode == .complete ? "Session complete" : "Claude's stream")
+            Text(model.snapshot.mode == .complete ? "Session complete" : "Agent stream")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Spacer()
@@ -87,14 +106,31 @@ struct ReviewPane: View {
                 ) {
                     Text("\(source.displayName): \(source.detail ?? source.label)")
                 } accessory: {
-                    EmptyView()
+                    if source.source == SourceName.tuple, source.status == "stopped",
+                        model.snapshot.sessionState == .active
+                    {
+                        Button("End Session…") { model.confirmEndSession = true }
+                            .controlSize(.small)
+                            .help("Finalize now if the call is actually over")
+                    }
                 }
             }
             if let text = modeBanner {
                 Banner(icon: "clock", tint: .secondary) {
-                    Text(text)
+                    if model.snapshot.mode == .waitingClaude {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(text)
+                            SessionPromptField()
+                        }
+                    } else {
+                        Text(text)
+                    }
                 } accessory: {
-                    EmptyView()
+                    if model.snapshot.mode == .finalizing {
+                        Button("Finish Session…") { model.confirmEndSession = true }
+                            .controlSize(.small)
+                            .help("Mark the handoff complete without waiting for the agent")
+                    }
                 }
             }
         }
@@ -105,6 +141,9 @@ struct ReviewPane: View {
     private var troubledSources: [SourceHealth] {
         model.snapshot.sources.filter {
             ["stopped", "error", "ambiguous"].contains($0.status)
+                // The dismissible collector warning above already shows this
+                // exact message; don't stack it twice.
+                && $0.detail != model.collectorWarning
         }
     }
 
@@ -115,7 +154,7 @@ struct ReviewPane: View {
         case .waitingClaude:
             "Waiting for the chronicle skill to attach from a repository."
         case .finalizing:
-            "Tuple call ended. Claude is finishing the handoff."
+            "Tuple call ended. The agent is finishing the handoff."
         case .interrupted:
             "This session was interrupted. Review or save the handoff, then delete it when no longer needed."
         default:
@@ -130,7 +169,7 @@ struct ReviewPane: View {
         let candidates = model.snapshot.ideCandidates
         if candidates.count > 1, model.source(SourceName.chronicle)?.status == "ambiguous" {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Multiple Chronicle sessions match this repository. Choose one:")
+                Text("Multiple IDE sessions match this repository. Choose one:")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 ForEach(candidates) { candidate in
@@ -174,6 +213,10 @@ struct ReviewPane: View {
                         .id(message.id)
                         .tag(message.id)
                         .listRowSeparator(.hidden)
+                        // Rows draw their own accent outline when selected; the
+                        // platform full-background highlight stays off.
+                        .listRowBackground(Color.clear)
+                        .selectionDisabled(message.kind == .ack)
                         .contextMenu { contextMenu(for: message) }
                 }
                 Color.clear
@@ -185,6 +228,11 @@ struct ReviewPane: View {
                     .onDisappear { nearBottom = false }
             }
             .listStyle(.plain)
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y + geometry.contentInsets.top > 1
+            } action: { _, isScrolled in
+                feedScrolled = isScrolled
+            }
             .accessibilityLabel("Review stream")
             .copyable(copyableSelection)
             .onKeyPress(.space) { toggleReadOnSelection() }
@@ -215,14 +263,14 @@ struct ReviewPane: View {
         case .message:
             MessageRow(
                 message: message,
+                isSelected: model.feedSelection == message.id,
                 isStale: model.staleReferenceIDs.contains(message.id),
                 onOpenReference: { model.openReference(message) })
         case .decision:
             DecisionRow(
                 message: message,
                 status: model.effectiveDecisionStatus(message) ?? .unreviewed,
-                isPending: model.pendingReviews[message.id] != nil,
-                pendingStatus: model.pendingReviews[message.id],
+                isSelected: model.feedSelection == message.id,
                 isStale: model.staleReferenceIDs.contains(message.id),
                 onApprove: { model.review(decisionId: message.id, as: .approved) },
                 onReject: { model.review(decisionId: message.id, as: .rejected) },

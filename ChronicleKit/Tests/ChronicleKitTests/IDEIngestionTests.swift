@@ -348,7 +348,7 @@ import Testing
         try IDEIngestion.discover(store: home.store, session: fresh)
         let ambiguous = try home.store.sourceHealth(sessionId: "call-2")[2]
         #expect(ambiguous.status == "ambiguous")
-        #expect(ambiguous.detail == "Multiple Chronicle sessions match this repository.")
+        #expect(ambiguous.detail == "Multiple IDE sessions match this repository.")
         #expect(try home.store.ideCandidates(sessionId: "call-2").count == 2)
 
         // Choosing one via the picker resolves the ambiguity.

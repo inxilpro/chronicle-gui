@@ -80,7 +80,7 @@ import Testing
     @Test func lifecycleRequiresCallEndBeforeFinish() throws {
         let home = try TestHome()
         let session = try home.store.createOrResumeSession(callId: "call-1")
-        #expect(throws: ChronicleError("Tuple call is still active; finish after Chronicle reports finalizing")) {
+        #expect(throws: ChronicleError("Tuple call is still active; finish after Chronicle reports finalizing. If the call has already ended, choose Session > End Session in the Chronicle app, then finish.")) {
             try home.store.finishSession(session.id)
         }
         try home.store.markCallEnded(session.id)
@@ -159,7 +159,7 @@ import Testing
         try home.store.finishSession(session.id)
         #expect(try home.store.snapshot().sessionId == "previous-call")
 
-        try home.store.clearTerminalSelectionForLaunch()
+        try home.store.deselectTerminalSession()
         let relaunched = try home.store.snapshot()
         #expect(relaunched.mode == .waitingCall)
         #expect(relaunched.sessionId == nil)
@@ -276,6 +276,45 @@ import Testing
         let stale = result.events.filter { $0.kind == "reference_stale" }
         #expect(stale.count == 1)
         #expect(stale[0].payload["locator"]?["snippet"]?.stringValue == "the snippet")
+    }
+
+    @Test func selectionEmitsDetailedSyntheticEvent() throws {
+        let home = try TestHome()
+        let session = try home.store.createOrResumeSession(callId: "call-1")
+        let repo = try makeGitRepository(at: home.scratch("repo"))
+        let attached = try home.store.attachRepo(sessionId: session.id, repo: repo)
+        let reference = DocumentReference(
+            heading: ["Decisions", "Retry placement"], snippet: "Retries live in the job")
+        try home.store.postMessage(
+            session: attached, id: "adr-1", kind: .decision,
+            text: "Retries live in the job at `app/Jobs/SyncRefundsJob.php:14`.",
+            reference: reference)
+        try home.store.postMessage(session: attached, id: "note-1", kind: .message, text: "hi")
+
+        #expect(throws: ChronicleError("message not found: missing")) {
+            try home.store.reportSelection(
+                sessionId: session.id,
+                message: ChatMessage(id: "missing", kind: .message, timestamp: "t", text: "x"))
+        }
+
+        let stored = try home.store.messages(sessionId: session.id)
+        let decision = try #require(stored.first { $0.id == "adr-1" })
+        let plain = try #require(stored.first { $0.id == "note-1" })
+        try home.store.reportSelection(sessionId: session.id, message: decision)
+        try home.store.reportSelection(sessionId: session.id, message: plain)
+
+        let result = try home.store.show(sessionId: session.id, consumer: "chronicle", limit: 10)
+        let selections = result.events.filter { $0.kind == "message_selected" }
+        #expect(selections.count == 2)
+        let selected = try #require(
+            selections.first { $0.payload["messageId"]?.stringValue == "adr-1" })
+        #expect(selected.source == "chronicle")
+        #expect(selected.stableId.hasPrefix("selection:adr-1:"))
+        #expect(selected.payload["kind"]?.stringValue == "decision")
+        #expect(selected.payload["text"]?.stringValue == decision.text)
+        #expect(selected.payload["decisionStatus"]?.stringValue == "unreviewed")
+        #expect(selected.payload["reference"]?["snippet"]?.stringValue == "Retries live in the job")
+        #expect(selected.payload["files"]?[0]?["path"]?.stringValue == "app/Jobs/SyncRefundsJob.php")
     }
 
     @Test func unlinkAndReadValidateTheirTargets() throws {
