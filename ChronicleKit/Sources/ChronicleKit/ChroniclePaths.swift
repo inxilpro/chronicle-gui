@@ -6,6 +6,12 @@ public struct ChroniclePaths: Sendable, Equatable {
     /// `CHRONICLE_APP_HOME` overrides it for tests and isolated development.
     public var appHome: URL
 
+    /// The stable CLI shim location; overridable so tests never touch the real home.
+    public var shimURL: URL = ChroniclePaths.shimURL
+
+    /// The installed skill file; overridable so tests never touch the real home.
+    public var skillURL: URL = ChroniclePaths.skillDirectory.appendingPathComponent("SKILL.md")
+
     public init(appHome: URL) {
         self.appHome = appHome.standardizedFileURL
     }

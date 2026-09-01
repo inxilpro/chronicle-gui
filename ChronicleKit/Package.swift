@@ -21,6 +21,9 @@ let package = Package(
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "Markdown", package: "swift-markdown"),
+            ],
+            resources: [
+                .copy("Resources/SKILL.md"),
             ]
         ),
         .target(
@@ -30,7 +33,13 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
         ),
-        .testTarget(name: "ChronicleKitTests", dependencies: ["ChronicleKit"]),
+        .testTarget(
+            name: "ChronicleKitTests",
+            dependencies: ["ChronicleKit"],
+            resources: [
+                .copy("Fixtures"),
+            ]
+        ),
         .testTarget(name: "ChronicleCLICoreTests", dependencies: ["ChronicleCLICore"]),
     ]
 )
