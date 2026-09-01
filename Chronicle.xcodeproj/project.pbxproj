@@ -6,7 +6,21 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		CC000000000000000000000C /* ChronicleKit in Frameworks */ = {isa = PBXBuildFile; productRef = CC0000000000000000000003 /* ChronicleKit */; };
+		CC000000000000000000000D /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = CC0000000000000000000004 /* Sparkle */; };
+		CC000000000000000000000E /* ChronicleCLICore in Frameworks */ = {isa = PBXBuildFile; productRef = CC0000000000000000000005 /* ChronicleCLICore */; };
+		CC0000000000000000000010 /* chronicle in Embed CLI */ = {isa = PBXBuildFile; fileRef = CC000000000000000000000A /* chronicle */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
+		CC0000000000000000000011 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6BA2209B304710B60009EB49 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CC0000000000000000000007;
+			remoteInfo = chronicle;
+		};
 		6BA220B1304710B70009EB49 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 6BA2209B304710B60009EB49 /* Project object */;
@@ -27,11 +41,39 @@
 		6BA220A3304710B60009EB49 /* Chronicle.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Chronicle.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6BA220B0304710B70009EB49 /* ChronicleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ChronicleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6BA220BA304710B70009EB49 /* ChronicleUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ChronicleUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		CC000000000000000000000A /* chronicle */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = chronicle; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		CC000000000000000000000F /* Embed CLI */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Helpers;
+			dstSubfolderSpec = 1;
+			files = (
+				CC0000000000000000000010 /* chronicle in Embed CLI */,
+			);
+			name = "Embed CLI";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		CC0000000000000000000015 /* Exceptions for "Chronicle" folder in "Chronicle" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 6BA220A2304710B60009EB49 /* Chronicle */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		6BA220A5304710B60009EB49 /* Chronicle */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				CC0000000000000000000015 /* Exceptions for "Chronicle" folder in "Chronicle" target */,
+			);
 			path = Chronicle;
 			sourceTree = "<group>";
 		};
@@ -45,6 +87,11 @@
 			path = ChronicleUITests;
 			sourceTree = "<group>";
 		};
+		CC0000000000000000000006 /* ChronicleCLI */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ChronicleCLI;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -52,6 +99,16 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CC000000000000000000000C /* ChronicleKit in Frameworks */,
+				CC000000000000000000000D /* Sparkle in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CC0000000000000000000009 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CC000000000000000000000E /* ChronicleCLICore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -76,6 +133,7 @@
 			isa = PBXGroup;
 			children = (
 				6BA220A5304710B60009EB49 /* Chronicle */,
+				CC0000000000000000000006 /* ChronicleCLI */,
 				6BA220B3304710B70009EB49 /* ChronicleTests */,
 				6BA220BD304710B70009EB49 /* ChronicleUITests */,
 				6BA220A4304710B60009EB49 /* Products */,
@@ -86,6 +144,7 @@
 			isa = PBXGroup;
 			children = (
 				6BA220A3304710B60009EB49 /* Chronicle.app */,
+				CC000000000000000000000A /* chronicle */,
 				6BA220B0304710B70009EB49 /* ChronicleTests.xctest */,
 				6BA220BA304710B70009EB49 /* ChronicleUITests.xctest */,
 			);
@@ -102,20 +161,46 @@
 				6BA2209F304710B60009EB49 /* Sources */,
 				6BA220A0304710B60009EB49 /* Frameworks */,
 				6BA220A1304710B60009EB49 /* Resources */,
+				CC000000000000000000000F /* Embed CLI */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				CC0000000000000000000012 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				6BA220A5304710B60009EB49 /* Chronicle */,
 			);
 			name = Chronicle;
 			packageProductDependencies = (
+				CC0000000000000000000003 /* ChronicleKit */,
+				CC0000000000000000000004 /* Sparkle */,
 			);
 			productName = Chronicle;
 			productReference = 6BA220A3304710B60009EB49 /* Chronicle.app */;
 			productType = "com.apple.product-type.application";
+		};
+		CC0000000000000000000007 /* chronicle */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CC000000000000000000000B /* Build configuration list for PBXNativeTarget "chronicle" */;
+			buildPhases = (
+				CC0000000000000000000008 /* Sources */,
+				CC0000000000000000000009 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				CC0000000000000000000006 /* ChronicleCLI */,
+			);
+			name = chronicle;
+			packageProductDependencies = (
+				CC0000000000000000000005 /* ChronicleCLICore */,
+			);
+			productName = chronicle;
+			productReference = CC000000000000000000000A /* chronicle */;
+			productType = "com.apple.product-type.tool";
 		};
 		6BA220AF304710B70009EB49 /* ChronicleTests */ = {
 			isa = PBXNativeTarget;
@@ -197,10 +282,15 @@
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 6BA220A4304710B60009EB49 /* Products */;
+			packageReferences = (
+				CC0000000000000000000001 /* XCLocalSwiftPackageReference "ChronicleKit" */,
+				CC0000000000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				6BA220A2304710B60009EB49 /* Chronicle */,
+				CC0000000000000000000007 /* chronicle */,
 				6BA220AF304710B70009EB49 /* ChronicleTests */,
 				6BA220B9304710B70009EB49 /* ChronicleUITests */,
 			);
@@ -253,6 +343,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CC0000000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -265,6 +362,11 @@
 			isa = PBXTargetDependency;
 			target = 6BA220A2304710B60009EB49 /* Chronicle */;
 			targetProxy = 6BA220BB304710B70009EB49 /* PBXContainerItemProxy */;
+		};
+		CC0000000000000000000012 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CC0000000000000000000007 /* chronicle */;
+			targetProxy = CC0000000000000000000011 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -398,11 +500,12 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 657AK7D2D9;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Chronicle/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -430,11 +533,12 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 657AK7D2D9;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Chronicle/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -533,6 +637,34 @@
 			};
 			name = Release;
 		};
+		CC0000000000000000000013 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 657AK7D2D9;
+				ENABLE_HARDENED_RUNTIME = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		CC0000000000000000000014 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 657AK7D2D9;
+				ENABLE_HARDENED_RUNTIME = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -572,7 +704,50 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+	CC000000000000000000000B /* Build configuration list for PBXNativeTarget "chronicle" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CC0000000000000000000013 /* Debug */,
+				CC0000000000000000000014 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		CC0000000000000000000001 /* XCLocalSwiftPackageReference "ChronicleKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ChronicleKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		CC0000000000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		CC0000000000000000000003 /* ChronicleKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ChronicleKit;
+		};
+		CC0000000000000000000004 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CC0000000000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+		CC0000000000000000000005 /* ChronicleCLICore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ChronicleCLICore;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 6BA2209B304710B60009EB49 /* Project object */;
 }

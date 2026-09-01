@@ -1,0 +1,3 @@
+import ChronicleCLICore
+
+ChronicleCLI.main()
