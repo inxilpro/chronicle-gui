@@ -105,9 +105,10 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -o pipefail
-          # Signing happens during the archive so every nested product (the
-          # Helpers/chronicle CLI, the Sparkle framework and its XPC services)
-          # is signed inside-out by Xcode. No codesign --deep anywhere.
+          # Signing happens during the archive so nested products built by
+          # Xcode (the Helpers/chronicle CLI, the Sparkle framework binary)
+          # are signed inside-out. Sparkle's prebuilt nested executables are
+          # re-signed in a later step. No codesign --deep anywhere.
           xcodebuild archive \
             -project Chronicle.xcodeproj \
             -scheme Chronicle \
@@ -128,15 +129,49 @@ jobs:
           mkdir -p "$RUNNER_TEMP/dist"
           cp -R "$RUNNER_TEMP/Chronicle.xcarchive/Products/Applications/Chronicle.app" "$RUNNER_TEMP/dist/"
 
+      - name: Re-sign Sparkle nested components
+        run: |
+          APP="$RUNNER_TEMP/dist/Chronicle.app"
+          SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+
+          # Sparkle arrives as a prebuilt binary framework, and Xcode re-signs
+          # only the framework itself during the archive — the nested Updater,
+          # Autoupdate, and XPC services keep signatures the notary service
+          # rejects (no Developer ID, no secure timestamp). Re-sign them
+          # inside-out, then re-seal the framework and the app bundle.
+          codesign -f -o runtime --timestamp --preserve-metadata=entitlements \
+            -s "Developer ID Application" \
+            "$SPARKLE/Versions/B/XPCServices/Downloader.xpc" \
+            "$SPARKLE/Versions/B/XPCServices/Installer.xpc" \
+            "$SPARKLE/Versions/B/Autoupdate" \
+            "$SPARKLE/Versions/B/Updater.app"
+          codesign -f -o runtime --timestamp \
+            -s "Developer ID Application" "$SPARKLE"
+          codesign -f -o runtime --timestamp --preserve-metadata=entitlements \
+            -s "Developer ID Application" "$APP"
+
       - name: Verify code signatures
         run: |
           APP="$RUNNER_TEMP/dist/Chronicle.app"
+          SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
           codesign --verify --deep --strict --verbose=2 "$APP"
           codesign --verify --strict --verbose=2 "$APP/Contents/Helpers/chronicle"
-          codesign --verify --strict --verbose=2 "$APP/Contents/Frameworks/Sparkle.framework"
+          codesign --verify --strict --verbose=2 "$SPARKLE"
           # Confirm hardened runtime is on the main executable and the helper.
           codesign --display --verbose=2 "$APP" 2>&1 | grep -q "runtime"
           codesign --display --verbose=2 "$APP/Contents/Helpers/chronicle" 2>&1 | grep -q "runtime"
+          # The notary service rejects any nested binary that lacks our
+          # Developer ID or a secure timestamp — catch that before uploading.
+          for NESTED in \
+            "$SPARKLE/Versions/B/XPCServices/Downloader.xpc" \
+            "$SPARKLE/Versions/B/XPCServices/Installer.xpc" \
+            "$SPARKLE/Versions/B/Autoupdate" \
+            "$SPARKLE/Versions/B/Updater.app"
+          do
+            codesign --verify --strict --verbose=2 "$NESTED"
+            codesign --display --verbose=2 "$NESTED" 2>&1 | grep -q "Authority=Developer ID Application"
+            codesign --display --verbose=2 "$NESTED" 2>&1 | grep -q "Timestamp="
+          done
 
       - name: Notarize and staple app
         env:
@@ -148,12 +183,32 @@ jobs:
           umask 077
           printf '%s\n' "$ASC_PRIVATE_KEY" > "$KEY_PATH"
 
-          ditto -c -k --keepParent "$RUNNER_TEMP/dist/Chronicle.app" "$RUNNER_TEMP/notarize.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
-            --key "$KEY_PATH" \
+          # notarytool exits 0 even when the verdict is Invalid, so check the
+          # status ourselves and surface Apple's log before failing.
+          cat > "$RUNNER_TEMP/notarize.sh" <<'EOF'
+          #!/bin/bash
+          set -euo pipefail
+          RESULT=$(xcrun notarytool submit "$1" \
+            --key "$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8" \
             --key-id "$ASC_KEY_ID" \
             --issuer "$ASC_ISSUER_ID" \
-            --wait
+            --wait --output-format json)
+          echo "$RESULT"
+          SUBMISSION_ID=$(jq -r .id <<< "$RESULT")
+          STATUS=$(jq -r .status <<< "$RESULT")
+          if [[ "$STATUS" != "Accepted" ]]; then
+            echo "::error::Notarization of $1 finished with status '$STATUS'"
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --key "$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8" \
+              --key-id "$ASC_KEY_ID" \
+              --issuer "$ASC_ISSUER_ID"
+            exit 1
+          fi
+          EOF
+          chmod +x "$RUNNER_TEMP/notarize.sh"
+
+          ditto -c -k --keepParent "$RUNNER_TEMP/dist/Chronicle.app" "$RUNNER_TEMP/notarize.zip"
+          "$RUNNER_TEMP/notarize.sh" "$RUNNER_TEMP/notarize.zip"
           rm "$RUNNER_TEMP/notarize.zip"
 
           xcrun stapler staple "$RUNNER_TEMP/dist/Chronicle.app"
@@ -189,11 +244,7 @@ jobs:
 
           # Notarize and staple the DMG itself so Gatekeeper is satisfied
           # before it is even opened.
-          xcrun notarytool submit "$RUNNER_TEMP/artifacts/Chronicle-$VERSION.dmg" \
-            --key "$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8" \
-            --key-id "$ASC_KEY_ID" \
-            --issuer "$ASC_ISSUER_ID" \
-            --wait
+          "$RUNNER_TEMP/notarize.sh" "$RUNNER_TEMP/artifacts/Chronicle-$VERSION.dmg"
           xcrun stapler staple "$RUNNER_TEMP/artifacts/Chronicle-$VERSION.dmg"
 
       - name: Generate and sign appcast
