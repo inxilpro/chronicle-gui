@@ -6,20 +6,20 @@ import Foundation
 /// the real app home, Tuple binary, or wall clock.
 public struct CLIContext {
     public var store: ChronicleStore
-    public var tuple: any TupleCalling
+    public var provider: any CallProvider
     public var makeMessageId: () -> String
     public var now: () -> Date
     public var sleep: (TimeInterval) -> Void
 
     public init(
         store: ChronicleStore,
-        tuple: any TupleCalling,
+        provider: any CallProvider,
         makeMessageId: @escaping () -> String = { UUID().uuidString.lowercased() },
         now: @escaping () -> Date = { Date() },
         sleep: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
     ) {
         self.store = store
-        self.tuple = tuple
+        self.provider = provider
         self.makeMessageId = makeMessageId
         self.now = now
         self.sleep = sleep
@@ -28,7 +28,7 @@ public struct CLIContext {
     public static func live() throws -> CLIContext {
         CLIContext(
             store: try ChronicleStore(paths: ChroniclePaths()),
-            tuple: TupleClient.discover())
+            provider: TupleClient.discover())
     }
 }
 
@@ -103,7 +103,7 @@ struct SessionCommand: ParsableCommand, ChronicleExecutable {
             guard let repo else {
                 throw ChronicleError("usage: chronicle session attach --repo <path>")
             }
-            let session = try Collector.ensureCurrentSession(store: context.store, tuple: context.tuple)
+            let session = try Collector.ensureCurrentSession(store: context.store, provider: context.provider)
             let attached = try context.store.attachRepo(sessionId: session.id, repo: repo)
             try IDEIngestion.discover(store: context.store, session: attached)
             return try sessionJSON(store: context.store, session: attached)
@@ -136,7 +136,7 @@ struct SessionCommand: ParsableCommand, ChronicleExecutable {
             abstract: "Complete a finalizing session after the handoff is done.")
 
         func execute(context: CLIContext) throws -> String {
-            try? Collector.collectOnce(store: context.store, tuple: context.tuple, timeout: "1ms")
+            try? Collector.collectOnce(store: context.store, provider: context.provider, timeout: "1ms")
             guard let session = try context.store.currentSession() else {
                 throw ChronicleError("no active or finalizing Chronicle session to finish")
             }
@@ -177,7 +177,7 @@ struct ShowCommand: ParsableCommand, ChronicleExecutable {
         guard let limit = Int(self.limit) else {
             throw ChronicleError("--limit must be an integer")
         }
-        let session = try Collector.ensureCurrentSession(store: context.store, tuple: context.tuple)
+        let session = try Collector.ensureCurrentSession(store: context.store, provider: context.provider)
         if wait {
             // Collection is process-safe: GUI and CLI readers serialize on the
             // same per-call lock and share Tuple's durable chronicle-<call-id>
@@ -194,7 +194,7 @@ struct ShowCommand: ParsableCommand, ChronicleExecutable {
                 let passMilliseconds = max(1, min(Int(remaining * 1000), 2000))
                 let passStarted = context.now()
                 try? Collector.collectOnce(
-                    store: context.store, tuple: context.tuple, timeout: "\(passMilliseconds)ms")
+                    store: context.store, provider: context.provider, timeout: "\(passMilliseconds)ms")
                 if try context.store.hasUndeliveredEvents(sessionId: session.id, consumer: cursor) {
                     break
                 }
@@ -206,7 +206,7 @@ struct ShowCommand: ParsableCommand, ChronicleExecutable {
                 }
             }
         } else {
-            try? Collector.collectOnce(store: context.store, tuple: context.tuple, timeout: "1ms")
+            try? Collector.collectOnce(store: context.store, provider: context.provider, timeout: "1ms")
         }
         let result = try context.store.show(sessionId: session.id, consumer: cursor, limit: limit)
         return try encodeJSON(result)
@@ -242,7 +242,7 @@ struct WorkingCommand: ParsableCommand, ChronicleExecutable {
         abstract: "Show the room that background work is happening.")
 
     func execute(context: CLIContext) throws -> String {
-        let session = try Collector.ensureCurrentSession(store: context.store, tuple: context.tuple)
+        let session = try Collector.ensureCurrentSession(store: context.store, provider: context.provider)
         try context.store.signalAgentWorking(sessionId: session.id, now: context.now())
         return "working"
     }
@@ -383,7 +383,7 @@ private func postMessage(
         kind = .decision
         messageId = id
     }
-    let session = try Collector.ensureCurrentSession(store: context.store, tuple: context.tuple)
+    let session = try Collector.ensureCurrentSession(store: context.store, provider: context.provider)
     try context.store.postMessage(
         session: session, id: messageId, kind: kind, text: text,
         reference: documentReference, explicitFiles: files.files)
@@ -404,7 +404,7 @@ struct UnlinkCommand: ParsableCommand, ChronicleExecutable {
         guard let messageId else {
             throw ChronicleError("unlink requires one message ID")
         }
-        let session = try Collector.ensureCurrentSession(store: context.store, tuple: context.tuple)
+        let session = try Collector.ensureCurrentSession(store: context.store, provider: context.provider)
         try context.store.unlink(sessionId: session.id, messageId: messageId)
         return "unlinked \(messageId)"
     }
@@ -419,7 +419,7 @@ struct ReadCommand: ParsableCommand, ChronicleExecutable {
     var messageId: String?
 
     func execute(context: CLIContext) throws -> String {
-        let session = try Collector.ensureCurrentSession(store: context.store, tuple: context.tuple)
+        let session = try Collector.ensureCurrentSession(store: context.store, provider: context.provider)
         try context.store.markRead(sessionId: session.id, messageId: messageId)
         if let messageId {
             return "marked \(messageId) read"

@@ -1,15 +1,8 @@
 import Foundation
 
-/// Injectable Tuple surface so tests can substitute fakes or shell-script mocks.
-public protocol TupleCalling: Sendable {
-    /// The current call's ID, or nil when Tuple reports not being in a call.
-    func currentCall() throws -> String?
-
-    /// One transcription pass for the session, importing whatever Tuple returns.
-    func collect(store: ChronicleStore, session: SessionRecord, timeout: String) throws
-}
-
-public final class TupleClient: TupleCalling {
+public final class TupleClient: CallProvider {
+    public let id = SourceName.tuple
+    public let displayName = "Tuple"
     public let executable: URL
 
     public init(executable: URL) {
@@ -87,6 +80,10 @@ public final class TupleClient: TupleCalling {
         }
         defer { flock(descriptor, LOCK_UN) }
 
+        // A batch a previous pass wrote but never committed (crash, database
+        // timeout) replays first; stable IDs make the re-insert idempotent.
+        try Self.drainSpool(store: store, session: session)
+
         let cursor = "chronicle-\(session.id)"
         let output = try run(arguments: [
             "--format", "json", "transcription", "show", session.id,
@@ -116,7 +113,18 @@ public final class TupleClient: TupleCalling {
             throw ChronicleError(error)
         }
 
-        let batch = TupleRecordParser.parse(output.stdout)
+        // Tuple's durable cursor has already advanced past this batch, so it
+        // is spooled to disk before the database write; a crash or timeout in
+        // between leaves the file for the next pass instead of losing speech.
+        let spooled = Self.spool(output.stdout, store: store, session: session)
+        try Self.apply(batch: TupleRecordParser.parse(output.stdout), store: store, session: session)
+        if let spooled {
+            try? FileManager.default.removeItem(at: spooled)
+        }
+        try Self.escalatePersistentGap(store: store, session: session)
+    }
+
+    static func apply(batch: ParsedTupleBatch, store: ChronicleStore, session: SessionRecord) throws {
         try store.insertSourceEvents(sessionId: session.id, events: batch.events)
         if let status = batch.status {
             try store.setSourceState(
@@ -132,7 +140,58 @@ public final class TupleClient: TupleCalling {
         if batch.callEnded {
             try store.markCallEnded(session.id)
         }
-        try Self.escalatePersistentGap(store: store, session: session)
+    }
+
+    // MARK: - Spool
+
+    /// Spool files older than this are orphans (their session was pruned or
+    /// renamed); a crashed pass is drained seconds later, not a day later.
+    static let spoolExpiry: TimeInterval = 24 * 3600
+
+    private static func spoolPrefix(sessionId: String) -> String {
+        "tuple-\(ChroniclePaths.safeSessionId(sessionId))-"
+    }
+
+    /// Writes the raw batch beside the database. Best-effort: a spool failure
+    /// falls back to the previous (unspooled) behavior rather than dropping
+    /// the batch that is already in hand.
+    static func spool(_ bytes: Data, store: ChronicleStore, session: SessionRecord) -> URL? {
+        guard !bytes.isEmpty else { return nil }
+        let directory = store.paths.spoolDirectory
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let milliseconds = Int64(Date().timeIntervalSince1970 * 1000)
+        let name = spoolPrefix(sessionId: session.id)
+            + String(format: "%015d", milliseconds)
+            + "-\(UUID().uuidString).ndjson"
+        let url = directory.appendingPathComponent(name)
+        do {
+            try bytes.write(to: url, options: .atomic)
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+    static func drainSpool(store: ChronicleStore, session: SessionRecord) throws {
+        let directory = store.paths.spoolDirectory
+        guard
+            let entries = try? FileManager.default.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: [.contentModificationDateKey])
+        else { return }
+        let prefix = spoolPrefix(sessionId: session.id)
+        for url in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            if url.lastPathComponent.hasPrefix(prefix) {
+                if let bytes = try? Data(contentsOf: url) {
+                    try apply(batch: TupleRecordParser.parse(bytes), store: store, session: session)
+                }
+                try? FileManager.default.removeItem(at: url)
+            } else if let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate,
+                Date().timeIntervalSince(modified) > spoolExpiry
+            {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
     }
 
     /// A `transcription_dropped` only surfaces as a stopped source when it is

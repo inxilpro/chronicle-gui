@@ -25,7 +25,7 @@ struct HandoffViewCommand: Equatable {
 final class AppModel {
     let store: ChronicleStore?
     let launchError: String?
-    private let tuple: any TupleCalling
+    private let provider: any CallProvider
 
     private(set) var snapshot = AppSnapshot(mode: .waitingCall)
     private(set) var handoff = HandoffDocument(markdown: "")
@@ -82,7 +82,7 @@ final class AppModel {
         ])
         let storedScale = UserDefaults.standard.double(forKey: SettingsKey.handoffTextScale)
         textScale = storedScale > 0 ? storedScale : 1
-        tuple = TupleClient.discover()
+        provider = TupleClient.discover()
         do {
             let store = try ChronicleStore(paths: ChroniclePaths())
             self.store = store
@@ -193,10 +193,13 @@ final class AppModel {
             guard let reference = message.reference else { continue }
             if handoff.resolve(reference) == nil {
                 stale.insert(message.id)
-                if !reportedStaleIDs.contains(message.id) {
+                // Only a successful report is remembered; a failed write
+                // retries on the next refresh instead of going silent forever.
+                if !reportedStaleIDs.contains(message.id),
+                    (try? store.reportStaleReference(
+                        sessionId: sessionId, messageId: message.id, locator: reference)) != nil
+                {
                     reportedStaleIDs.insert(message.id)
-                    try? store.reportStaleReference(
-                        sessionId: sessionId, messageId: message.id, locator: reference)
                 }
             }
         }
@@ -287,14 +290,14 @@ final class AppModel {
 
     private func startCollector() {
         guard let store else { return }
-        let tuple = self.tuple
+        let provider = self.provider
         collectorTask = Task { [weak self] in
             var lastSweep = ContinuousClock.now
             while !Task.isCancelled {
                 let start = ContinuousClock.now
                 let sweep = start - lastSweep > .seconds(1800)
                 if sweep { lastSweep = start }
-                let warning = await Self.collectPass(store: store, tuple: tuple, sweep: sweep)
+                let warning = await Self.collectPass(store: store, provider: provider, sweep: sweep)
                 if Task.isCancelled { break }
                 self?.handleCollectorResult(warning)
                 let elapsed = ContinuousClock.now - start
@@ -306,7 +309,7 @@ final class AppModel {
     }
 
     private nonisolated static func collectPass(
-        store: ChronicleStore, tuple: any TupleCalling, sweep: Bool
+        store: ChronicleStore, provider: any CallProvider, sweep: Bool
     ) async -> String? {
         await Task.detached(priority: .utility) {
             if sweep {
@@ -318,7 +321,7 @@ final class AppModel {
                 // Sessions start explicitly (Start Session, or the agent's
                 // session attach) — never merely because the app was open.
                 try Collector.collectOnce(
-                    store: store, tuple: tuple, timeout: "2s", startSessions: false)
+                    store: store, provider: provider, timeout: "2s", startSessions: false)
                 return nil
             } catch {
                 return (error as? ChronicleError)?.message ?? error.localizedDescription
@@ -575,6 +578,18 @@ final class AppModel {
         guard let store, let sessionId = snapshot.sessionId else { return }
         do {
             try store.selectIDECandidate(sessionId: sessionId, candidateId: candidateId)
+            refresh()
+        } catch {
+            actionError = (error as? ChronicleError)?.message ?? error.localizedDescription
+        }
+    }
+
+    /// The explicit escape from a fail-closed IDE log: drop the record the
+    /// last pass failed on and resume tailing behind it.
+    func skipIDERecord() {
+        guard let store, let sessionId = snapshot.sessionId else { return }
+        do {
+            try IDEIngestion.skipFailedRecord(store: store, sessionId: sessionId)
             refresh()
         } catch {
             actionError = (error as? ChronicleError)?.message ?? error.localizedDescription

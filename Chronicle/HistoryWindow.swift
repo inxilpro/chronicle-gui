@@ -138,7 +138,9 @@ struct HistoryView: View {
 
     private func canSave(_ id: SessionSummary.ID) -> Bool {
         guard let session = session(id) else { return false }
-        return (session.state == .complete || session.state == .interrupted) && !session.dataPruned
+        // Retention keeps the notes of a pruned-but-unsaved session precisely
+        // so it can still be saved; gate on the notes, not on pruning.
+        return (session.state == .complete || session.state == .interrupted) && session.hasHandoff
     }
 
     private func repoName(_ session: SessionSummary) -> String {
@@ -146,8 +148,8 @@ struct HistoryView: View {
         return (repo as NSString).lastPathComponent
     }
 
-    /// Pruned sessions have no notes left to drag, so they get no drag at all
-    /// rather than an empty file.
+    /// A session with no notes content has nothing to drag, so it gets no
+    /// drag at all rather than an empty file.
     @ViewBuilder
     private func sessionCell(_ session: SessionSummary) -> some View {
         let label = HStack(spacing: 6) {
@@ -168,11 +170,11 @@ struct HistoryView: View {
             }
         }
         .accessibilityLabel(accessibilityLabel(session))
-        if session.dataPruned {
-            label
-        } else {
+        if session.hasHandoff {
             label.draggable(
                 HandoffFileTransfer(notesPath: model.notesPath(forSession: session.id)))
+        } else {
+            label
         }
     }
 

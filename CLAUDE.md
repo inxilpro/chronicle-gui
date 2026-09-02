@@ -57,6 +57,9 @@ socket, XPC service, or "GUI is authoritative" assumption.
 Data flow: `Collector.collectOnce` is the single collection pass, run both by the GUI's
 background loop and by every CLI `show`/`session` command. It polls `tuple call current`,
 collects Tuple transcription under a lock, then discovers and tails the IDE plugin's JSONL log.
+Call detection + collection sit behind the `CallProvider` protocol (`CallProvider.swift`);
+`TupleClient` is the only implementation today, and a future call source (Zoom, local capture)
+plugs in there without touching the collector, store, or CLI.
 Everything normalizes into `source_events`; `ChronicleStore.show` hands each consumer its
 undelivered events exactly once via `consumer_cursors`/`consumer_deliveries` in one transaction
 — ordered by `occurred_at`, not insertion order, so late-arriving events still deliver.

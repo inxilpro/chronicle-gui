@@ -48,6 +48,7 @@ the GUI to be running.
 ~/Library/Application Support/Chronicle/     ("app home"; CHRONICLE_APP_HOME overrides, for tests/dev)
   chronicle.db
   locks/
+  spool/                                     raw Tuple batches held between cursor advance and DB commit
   sessions/<safe-session-id>/notes.md        the internal handoff; Claude edits it, the app renders it
 ~/.chronicle/bin/chronicle                   stable symlink to the embedded CLI (skill uses the absolute path)
 ~/.claude/skills/chronicle/SKILL.md          installed skill (template resource, {{CHRONICLE_BIN}} substituted)
@@ -99,7 +100,7 @@ struct IDESessionCandidate {           // an entry from the plugin's sessions.js
 }
 
 struct NormalizedEvent {
-  var stableId: String; var source: String        // "tuple" | "chronicle-ide" stored as "chronicle"? see §5
+  var stableId: String; var source: String        // "tuple" | "ide" (imported plugin events) | "chronicle" (synthetic review events); see §5
   var streamId: String?; var sourceSequence: Int64?
   var occurredAt, observedAt: String
   var kind: String; var payload: JSONValue
@@ -329,6 +330,11 @@ CLI `show`/`session` command):
 2. Tuple transcription, under an exclusive lock on `locks/tuple-<hash>.lock`:
    `tuple --format json transcription show <call-id> --wait --timeout <t> --with-events --cursor chronicle-<call-id>`.
    Tuple owns that durable cursor (backlog catch-up and restart-without-gaps are Tuple's job).
+   Because the cursor advances on read, each raw batch is spooled to
+   `spool/tuple-<safe-id>-<timestamp>-<uuid>.ndjson` before the database commit and removed
+   after it; the next pass (still under the lock) drains any leftover spool files first, so a
+   crash or busy-timeout between read and commit loses nothing. Stable IDs make the replay
+   idempotent; spool files from other sessions expire after 24 h.
 3. IDE-plugin discovery + collection (registry match, JSONL tail, import).
 
 Tuple binary discovery: `$TUPLE_BIN`, `/usr/local/bin/tuple`, `/opt/homebrew/bin/tuple`, then
@@ -349,9 +355,11 @@ Tuple binary discovery: `$TUPLE_BIN`, `/usr/local/bin/tuple`, `/opt/homebrew/bin
 - Health: `transcription_finished|transcription_started|recording_started` → `live`
   "Transcription is live."; `recording_ended|transcription_ended` → `stopped` "Transcription
   stopped during the call. Restart it in Tuple if intended.". `transcription_dropped` is stored
-  as evidence but debounced: only when a drop is still the latest Tuple record after a 30 s
-  grace period does health become `stopped` ("…transcription gap that has not recovered…") —
-  brief gaps while Tuple keeps transcribing never surface (first-live-session feedback).
+  as evidence but debounced: only when a drop is still the most recently *collected* Tuple
+  record (arrival order, not `occurred_at` — a segment spoken across the drop but delivered
+  after it proves recovery) after a 30 s grace period does health become `stopped`
+  ("…transcription gap that has not recovered…") — brief gaps while Tuple keeps transcribing
+  never surface (first-live-session feedback).
 - Malformed lines counted, not fatal → `error` "Ignored N malformed Tuple record(s); durable
   records were kept."
 - Non-zero tuple exits: distinguish "transcription is not running / no recording / capture not
@@ -378,6 +386,10 @@ Tuple binary discovery: `$TUPLE_BIN`, `/usr/local/bin/tuple`, `/opt/homebrew/bin
 - **Log tailing**: cursor `{path, offset, fileId (inode), lastSequence, lastType}` persisted in
   `source_state.cursor_json`; reset when path changed, file shrank, or inode changed. Read from
   offset; consume only complete newline-terminated lines (defer a partial tail); strip `\r`.
+- **Skip escape**: a per-record failure still fails closed (cursor preserved), but it commits
+  the chunk's valid prefix immediately and stores a `failedNext {offset, lastSequence}` skip
+  target in the cursor. The error banner's **Skip Bad Record** action resumes tailing just past
+  the bad record — the only data lost is the record itself.
 - **Envelope validation**: schemaVersion 1; non-empty id; `sessionId` matches; `sequence`
   strictly `last + 1`; sequence 1 ⇔ `session_started`; nothing after `session_ended`;
   `redacted` present only as `true`; millisecond-UTC timestamps; no duplicate ids in a chunk;
@@ -449,10 +461,10 @@ until exported), plus auxiliary windows. Follow the `mac-assed-mac-app` skill th
 
 - **Main window**: two panes in a real split (persisted widths): left the **Review** stream
   (Claude's chat: message bubbles, quiet ack rows, decision cards with Approve/Reject), right
-  the **Planning handoff** rendered Markdown. Toolbar: source status (three dots with
-  popover detail), unread count, Mark All as Read, History. Waiting states render centered
-  guidance (waiting for call / transcription / skill attach) with an Install-integration call
-  to action when needed.
+  the **Planning handoff** rendered Markdown. No toolbar: the review pane's header carries the
+  unread count, its footer carries the source strip and Mark All as Read (see UI-DESIGN §3),
+  and History is a separate window (⌘Y). Waiting states render centered guidance (waiting for
+  call / transcription / skill attach) with an Install-integration call to action when needed.
 - **Decision cards** are the confirmation surface: Approve / Reject buttons, optimistic,
   becoming a static reviewed state. Also post macOS **UserNotifications** for new decisions
   (actions: Approve/Reject) and optionally messages; clicking focuses the card.
@@ -466,7 +478,7 @@ until exported), plus auxiliary windows. Follow the `mac-assed-mac-app` skill th
   ⌘F find bar; Plan-ready state offers Copy (⌥ copies as rendered rich text) and Save As….
 - **Menus**: full command model. File: Save Handoff As… (⇧⌘S), Copy Handoff, Close. Session:
   Mark All as Read (⇧⌘U), Delete Session…. View: toggle panes, text size. Window/Help standard.
-  History window (⌥⌘H) listing recent sessions (state chip, unsaved-handoff badge, "Details
+  History window (⌘Y; ⌥⌘H belongs to Hide Others) listing recent sessions (state chip, unsaved-handoff badge, "Details
   expired", delete with confirmation). Settings (⌘,): General (editor choice: PhpStorm,
   IntelliJ IDEA, VS Code, Cursor, custom URL template; IDE-plugin folder override with
   Choose…), Integration (install/reinstall, shim + skill paths, optional `/usr/local/bin`

@@ -3,7 +3,9 @@ import Testing
 import ChronicleKit
 @testable import ChronicleCLICore
 
-private struct FakeTuple: TupleCalling {
+private struct FakeTuple: CallProvider {
+    let id = SourceName.tuple
+    let displayName = "Tuple"
     var callId: String?
 
     func currentCall() throws -> String? { callId }
@@ -48,7 +50,7 @@ private final class CLITestHome {
     func context(callId: String? = "tuple-call-1") -> CLIContext {
         nonisolated(unsafe) var counter = 0
         return CLIContext(
-            store: store, tuple: FakeTuple(callId: callId),
+            store: store, provider: FakeTuple(callId: callId),
             makeMessageId: {
                 counter += 1
                 return "generated-\(counter)"

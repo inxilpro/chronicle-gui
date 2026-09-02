@@ -110,7 +110,9 @@ func makeTupleMock(in directory: URL, body: String) throws -> TupleClient {
     return TupleClient(executable: executable)
 }
 
-struct FakeTuple: TupleCalling {
+struct FakeTuple: CallProvider {
+    let id = SourceName.tuple
+    let displayName = "Tuple"
     var callId: String?
     var failure: String?
 

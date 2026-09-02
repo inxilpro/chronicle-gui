@@ -64,10 +64,16 @@ jobs:
         with:
           path: |
             DerivedData/SourcePackages
+            ChronicleKit/.build
             ~/Library/Caches/org.swift.swiftpm
           key: spm-release-${{ runner.os }}-${{ hashFiles('ChronicleKit/Package.resolved', 'Chronicle.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: |
             spm-release-${{ runner.os }}-
+
+      # The tag is the release trigger, so gate on the package tests here
+      # rather than trusting that main was green when it was tagged.
+      - name: Run ChronicleKit tests
+        run: swift test --package-path ChronicleKit
 
       - name: Import Developer ID certificate
         env:

@@ -7,6 +7,23 @@ struct IDECursor: Codable, Equatable {
     var fileId: UInt64?
     var lastSequence: Int64
     var lastType: String?
+    /// Set when the log failed closed on a bad record: the position just past
+    /// it, so the user can explicitly resume without the plugin or app updating.
+    var failedNext: IDESkipTarget? = nil
+}
+
+struct IDESkipTarget: Codable, Equatable {
+    var offset: Int64
+    var lastSequence: Int64
+}
+
+/// A per-record log failure: the valid prefix parsed before it, plus where
+/// tailing would resume if the user chooses to skip the record.
+struct IDELogFailure: Error {
+    var message: String
+    var events: [NormalizedEvent]
+    var consumed: Int
+    var nextSequence: Int64
 }
 
 struct ParsedIDEChunk {
@@ -152,6 +169,21 @@ public enum IDEIngestion {
                 bytes, candidate: candidate,
                 previousSequence: cursor.lastSequence, previousType: cursor.lastType,
                 observedAt: observedAt)
+        } catch let failure as IDELogFailure {
+            // Fail closed: the cursor stays put. The valid records before the
+            // bad one are committed now (stable IDs dedupe any replay), and
+            // the position past the bad record is stored so the user can
+            // choose to skip it from the error banner.
+            try store.insertSourceEvents(sessionId: session.id, events: failure.events)
+            var preserved = cursor
+            preserved.failedNext = IDESkipTarget(
+                offset: cursor.offset + Int64(failure.consumed),
+                lastSequence: failure.nextSequence)
+            let message = "Invalid Chronicle log \(candidate.logPath): \(failure.message)"
+            try store.setSourceState(
+                sessionId: session.id, source: SourceName.chronicle, status: "error",
+                detail: message, cursorJson: encodeCursor(preserved))
+            throw ChronicleError(message)
         } catch {
             let message = "Invalid Chronicle log \(candidate.logPath): \(messageText(error))"
             try store.setSourceState(
@@ -171,14 +203,38 @@ public enum IDEIngestion {
         let updated = IDECursor(
             path: candidate.logPath, offset: cursor.offset + Int64(chunk.consumed),
             fileId: fileId, lastSequence: chunk.lastSequence, lastType: chunk.lastType)
-        let cursorJson: String
+        try setCandidateHealth(
+            store: store, sessionId: session.id, candidate: candidate,
+            cursorJson: encodeCursor(updated))
+    }
+
+    /// The user's explicit escape from a fail-closed log: advance the cursor
+    /// past the record the last collect pass failed on. The records before it
+    /// were already committed at failure time; only the bad record is lost.
+    public static func skipFailedRecord(store: ChronicleStore, sessionId: String) throws {
+        guard
+            let state = try store.sourceState(sessionId: sessionId, source: SourceName.chronicle),
+            let json = state.cursorJson,
+            let cursor = try? JSONDecoder().decode(IDECursor.self, from: Data(json.utf8)),
+            let target = cursor.failedNext
+        else {
+            throw ChronicleError("no failed Chronicle record to skip")
+        }
+        let resumed = IDECursor(
+            path: cursor.path, offset: target.offset, fileId: cursor.fileId,
+            lastSequence: target.lastSequence, lastType: nil)
+        try store.setSourceState(
+            sessionId: sessionId, source: SourceName.chronicle, status: "waiting",
+            detail: "Skipped an unreadable Chronicle record; resuming on the next pass.",
+            cursorJson: encodeCursor(resumed))
+    }
+
+    private static func encodeCursor(_ cursor: IDECursor) throws -> String {
         do {
-            cursorJson = String(decoding: try ChronicleStore.encoder.encode(updated), as: UTF8.self)
+            return String(decoding: try ChronicleStore.encoder.encode(cursor), as: UTF8.self)
         } catch {
             throw ChronicleError("cannot encode Chronicle cursor: \(error.localizedDescription)")
         }
-        try setCandidateHealth(
-            store: store, sessionId: session.id, candidate: candidate, cursorJson: cursorJson)
     }
 
     private static func setCandidateHealth(
@@ -369,6 +425,14 @@ public enum IDEIngestion {
         var ids = Set<String>()
         let newline = UInt8(ascii: "\n")
         let bytes = [UInt8](bytes)
+        // A failing record aborts the chunk (fail-closed), but the failure
+        // carries the valid prefix and the position just past the record so
+        // the user can explicitly skip it.
+        func fail(_ error: Error, recordSequence: Int64?) -> IDELogFailure {
+            IDELogFailure(
+                message: messageText(error), events: events, consumed: consumed,
+                nextSequence: max(recordSequence ?? 0, lastSequence + 1))
+        }
         while let relativeEnd = bytes[consumed...].firstIndex(of: newline) {
             var line = bytes[consumed..<relativeEnd]
             if line.last == UInt8(ascii: "\r") {
@@ -376,15 +440,30 @@ public enum IDEIngestion {
             }
             consumed = relativeEnd + 1
             if line.isEmpty {
-                throw ChronicleError("empty JSONL record at sequence \(lastSequence + 1)")
+                throw fail(
+                    ChronicleError("empty JSONL record at sequence \(lastSequence + 1)"),
+                    recordSequence: nil)
             }
             if lastType == "session_ended" {
-                throw ChronicleError("session_ended is not the final Chronicle record")
+                throw fail(
+                    ChronicleError("session_ended is not the final Chronicle record"),
+                    recordSequence: nil)
             }
-            let envelope = try parseEnvelope(Data(line), atSequence: lastSequence + 1)
-            try validateEnvelope(envelope, candidate: candidate, expectedSequence: lastSequence + 1)
+            let envelope: IDEEnvelope
+            do {
+                envelope = try parseEnvelope(Data(line), atSequence: lastSequence + 1)
+            } catch {
+                throw fail(error, recordSequence: nil)
+            }
+            do {
+                try validateEnvelope(envelope, candidate: candidate, expectedSequence: lastSequence + 1)
+            } catch {
+                throw fail(error, recordSequence: envelope.sequence)
+            }
             guard ids.insert(envelope.id).inserted else {
-                throw ChronicleError("duplicate Chronicle event id \(envelope.id)")
+                throw fail(
+                    ChronicleError("duplicate Chronicle event id \(envelope.id)"),
+                    recordSequence: envelope.sequence)
             }
             lastSequence = envelope.sequence
             lastType = envelope.kind

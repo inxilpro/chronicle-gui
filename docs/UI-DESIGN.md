@@ -53,8 +53,12 @@ Header: "Review" + subtitle ("Agent stream" / "Session complete") + unread pill 
 
 Banners (stacked, in priority order): integration missing (with inline Install) or skill
 update available (with inline Update — the startup check compares the installed skill against
-the bundled template), IDE-folder notice, dismissible error/live-warning, per-source detail for
-`stopped|error|ambiguous`, and the mode banner with these strings:
+the bundled template), IDE-folder notice, unreadable-notes error (the snapshot degrades to an
+empty handoff instead of an alert loop), new-call offer while a completed/interrupted session
+is on screen ("A new Tuple call is in progress." with an inline Start Session), dismissible
+error/live-warning, per-source detail for `stopped|error|ambiguous` (the IDE `error` banner
+offers **Skip Bad Record** when a fail-closed log stored a skip target), and the mode banner
+with these strings:
 
 - `waitingTranscription`: "Call found. Waiting for transcription — start transcription in Tuple."
 - `waitingClaude`: "Waiting for the chronicle skill to attach from a repository."
@@ -144,7 +148,7 @@ Body: rendered Markdown (native SwiftUI text, selectable). Requirements:
 
 | Element | Control | Selection | Keyboard | Copy | Drag | Context menu | Saved state | AX |
 |---|---|---|---|---|---|---|---|---|
-| Review feed | `List` | single row (accent outline, no full-background highlight; acks unselectable; selecting marks read + emits `message_selected` + decisions jump the handoff pane) | ↑↓ move, Space toggles read, ⏎ approve / ⌫ reject focused decision | message text (plain) | — | Copy Message, Mark Read/Unread, Approve/Reject (decisions), Copy Reference | scroll pos (session-scoped) | list; decision rows announce state ("Decision needs confirmation, unread" / "Decided"/"Rejected") |
+| Review feed | `List` | single row (accent outline, no full-background highlight; acks unselectable; selecting marks read + emits `message_selected`; the handoff pane never scrolls on selection — that is Jump to Section's job) | ↑↓ move, Space marks read, ⏎ approve / ⌫ reject focused decision | message text (plain) | — | Copy Message, Mark as Read, Approve/Reject (decisions), Copy Reference | scroll pos (session-scoped) | list; decision rows announce state ("Decision needs confirmation, unread" / "Decided"/"Rejected") |
 | Decision card buttons | `Button` | — | ⏎/⌫ when row focused | — | — | mirrored in row menu + Session menu | review status (db) | buttons labeled "Approve decision"/"Reject decision" |
 | Reference chip | `Button` styled chip | — | activates on ⏎ | Copy Reference (heading › snippet) | — | Copy Reference | — | "Reference: <heading>" |
 | Source strip | custom HStack of dots | — | focusable, ⏎ opens popover | — | — | — | — | each: "<source>, <status>" |

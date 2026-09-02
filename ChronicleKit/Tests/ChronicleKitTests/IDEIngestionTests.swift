@@ -2,6 +2,17 @@ import Foundation
 import Testing
 @testable import ChronicleKit
 
+/// Per-record log failures carry the valid prefix and a skip target; these
+/// tests only care about the message unless they exercise the skip.
+private func captureLogFailure(_ body: () throws -> Void) -> IDELogFailure? {
+    do {
+        try body()
+        return nil
+    } catch {
+        return error as? IDELogFailure
+    }
+}
+
 @Suite struct IDERegistryTests {
     @Test func fixtureMatchesSchemaOne() throws {
         let candidates = try IDEIngestion.parseRegistry(Fixtures.registry)
@@ -115,7 +126,7 @@ import Testing
 
         var malformedComplete = firstTwo
         malformedComplete.append(Data("not-json\n".utf8))
-        let error = captureError {
+        let error = captureLogFailure {
             _ = try IDEIngestion.parseChunk(
                 malformedComplete, candidate: try Fixtures.candidate(),
                 previousSequence: 0, previousType: nil, observedAt: observedAt)
@@ -174,7 +185,7 @@ import Testing
             ),
         ]
         for (data, expected) in cases {
-            let error = captureError {
+            let error = captureLogFailure {
                 _ = try IDEIngestion.parseChunk(
                     data, candidate: try Fixtures.candidate(),
                     previousSequence: 0, previousType: nil, observedAt: observedAt)
@@ -189,7 +200,7 @@ import Testing
         var withoutFirst = Data(
             Fixtures.logLines.dropFirst().joined(separator: Data("\n".utf8)))
         withoutFirst.append(UInt8(ascii: "\n"))
-        let error = captureError {
+        let error = captureLogFailure {
             _ = try IDEIngestion.parseChunk(
                 withoutFirst, candidate: try Fixtures.candidate(),
                 previousSequence: 0, previousType: nil, observedAt: observedAt)
@@ -198,7 +209,7 @@ import Testing
         #expect(error?.message.contains("expected Chronicle sequence 1, found 2") == true)
 
         let wrongFirst = Fixtures.mutateLogLine(0) { $0["type"] = "search"; $0["data"] = ["query": "x"] }
-        let firstError = captureError {
+        let firstError = captureLogFailure {
             _ = try IDEIngestion.parseChunk(
                 wrongFirst, candidate: try Fixtures.candidate(),
                 previousSequence: 0, previousType: nil, observedAt: observedAt)
@@ -210,7 +221,7 @@ import Testing
         var log = Fixtures.log
         log.append(Fixtures.logLines[16])
         log.append(UInt8(ascii: "\n"))
-        let error = captureError {
+        let error = captureLogFailure {
             _ = try IDEIngestion.parseChunk(
                 log, candidate: try Fixtures.candidate(),
                 previousSequence: 0, previousType: nil, observedAt: observedAt)
@@ -218,7 +229,7 @@ import Testing
         #expect(error?.message == "session_ended is not the final Chronicle record")
 
         // Also across chunks: a resumed cursor that already saw session_ended.
-        let resumed = captureError {
+        let resumed = captureLogFailure {
             _ = try IDEIngestion.parseChunk(
                 Data(Fixtures.logLines[1] + [UInt8(ascii: "\n")]),
                 candidate: try Fixtures.candidate(),
@@ -230,7 +241,7 @@ import Testing
     @Test func emptyLinesAreAnError() throws {
         var log = Data(Fixtures.logLines[0])
         log.append(contentsOf: [UInt8(ascii: "\n"), UInt8(ascii: "\n")])
-        let error = captureError {
+        let error = captureLogFailure {
             _ = try IDEIngestion.parseChunk(
                 log, candidate: try Fixtures.candidate(),
                 previousSequence: 0, previousType: nil, observedAt: observedAt)
@@ -455,7 +466,60 @@ import Testing
         #expect(error?.message.contains("Invalid Chronicle log") == true)
         let state = try #require(try home.store.sourceState(sessionId: session.id, source: "chronicle"))
         #expect(state.status == "error")
-        #expect(state.cursorJson == cursorBefore)
+        // The tail position is preserved (fail-closed); the failure only adds
+        // the skip target for the user's explicit escape.
+        let before = try JSONDecoder().decode(
+            IDECursor.self, from: Data(cursorBefore.utf8))
+        var after = try JSONDecoder().decode(
+            IDECursor.self, from: Data(try #require(state.cursorJson).utf8))
+        #expect(after.failedNext != nil)
+        after.failedNext = nil
+        #expect(after == before)
+    }
+
+    @Test func skippingAFailedRecordResumesPastItWithoutLosingThePrefix() throws {
+        let home = try TestHome()
+        let session = try home.store.createOrResumeSession(callId: "call-1")
+        let log = home.scratch("chronicle.jsonl")
+        var good = Data(Fixtures.logLines[0])
+        good.append(UInt8(ascii: "\n"))
+        try good.write(to: log)
+        let candidate = try activeFixtureCandidate(logPath: log.path)
+        try home.store.replaceIDECandidates(sessionId: session.id, candidates: [candidate])
+        try IDEIngestion.collect(store: home.store, session: session)
+        _ = try home.store.show(sessionId: session.id, consumer: "c", limit: 10)
+
+        // A valid record, a corrupt one (which consumes sequence 3), then the
+        // record that follows it.
+        var tail = Data(Fixtures.logLines[1])
+        tail.append(UInt8(ascii: "\n"))
+        tail.append(Data("not-json\n".utf8))
+        tail.append(Fixtures.logLines[3])
+        tail.append(UInt8(ascii: "\n"))
+        let handle = try FileHandle(forWritingTo: log)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: tail)
+        try handle.close()
+
+        let error = captureError { try IDEIngestion.collect(store: home.store, session: session) }
+        #expect(error?.message.contains("malformed complete") == true)
+        // The valid prefix before the bad record was committed at failure time.
+        let prefix = try home.store.show(sessionId: session.id, consumer: "c", limit: 10)
+        #expect(prefix.events.map(\.sourceSequence) == [2])
+
+        try IDEIngestion.skipFailedRecord(store: home.store, sessionId: session.id)
+        let skipped = try #require(
+            try home.store.sourceState(sessionId: session.id, source: "chronicle"))
+        #expect(skipped.status == "waiting")
+
+        try IDEIngestion.collect(store: home.store, session: session)
+        let resumed = try home.store.show(sessionId: session.id, consumer: "c", limit: 10)
+        #expect(resumed.events.map(\.sourceSequence) == [4])
+
+        // Nothing left to skip once the log is healthy again.
+        #expect(throws: ChronicleError("no failed Chronicle record to skip")) {
+            try IDEIngestion.skipFailedRecord(store: home.store, sessionId: session.id)
+        }
     }
 
     @Test func completedRegistryStateRequiresSessionEndedLog() throws {

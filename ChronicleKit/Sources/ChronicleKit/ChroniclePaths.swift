@@ -27,6 +27,9 @@ public struct ChroniclePaths: Sendable, Equatable {
 
     public var databaseURL: URL { appHome.appendingPathComponent("chronicle.db") }
     public var locksDirectory: URL { appHome.appendingPathComponent("locks", isDirectory: true) }
+    /// Raw collected batches persisted before their database commit, so a
+    /// crash between a provider's cursor advancing and the commit loses nothing.
+    public var spoolDirectory: URL { appHome.appendingPathComponent("spool", isDirectory: true) }
     public var sessionsDirectory: URL { appHome.appendingPathComponent("sessions", isDirectory: true) }
 
     public func sessionDirectory(sessionId: String) -> URL {

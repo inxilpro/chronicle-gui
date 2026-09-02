@@ -576,8 +576,10 @@ public final class ChronicleStore: Sendable {
         }
     }
 
-    /// The chronologically latest event for one source, for freshness checks
-    /// like gap escalation.
+    /// The most recently collected event for one source, for freshness checks
+    /// like gap escalation. Ordered by arrival (insertion), not `occurred_at`:
+    /// a speech segment that started before a `transcription_dropped` but was
+    /// delivered after it still proves the stream recovered.
     public func latestSourceEvent(
         sessionId: String, source: String
     ) throws -> (kind: String, occurredAt: String, observedAt: String)? {
@@ -588,7 +590,7 @@ public final class ChronicleStore: Sendable {
                     sql: """
                         SELECT kind, occurred_at, observed_at FROM source_events
                         WHERE session_id = ? AND source = ?
-                        ORDER BY occurred_at DESC, sequence DESC LIMIT 1
+                        ORDER BY sequence DESC LIMIT 1
                         """,
                     arguments: [sessionId, source])
             else { return nil }
@@ -809,6 +811,21 @@ public final class ChronicleStore: Sendable {
 
     public func messages(sessionId: String) throws -> [ChatMessage] {
         try read { db in
+            // One pass over file_references for the whole session; a per-message
+            // query would run on every snapshot rebuild.
+            var filesByMessage: [String: [FileReference]] = [:]
+            for row in try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT message_id, path, line, end_line, sha FROM file_references
+                    WHERE session_id = ? ORDER BY message_id, position
+                    """,
+                arguments: [sessionId])
+            {
+                filesByMessage[row["message_id"], default: []].append(
+                    FileReference(
+                        path: row["path"], line: row["line"], endLine: row["end_line"], sha: row["sha"]))
+            }
             let rows = try Row.fetchAll(
                 db,
                 sql: """
@@ -833,19 +850,10 @@ public final class ChronicleStore: Sendable {
                 let reference = try referenceJson.map { json in
                     try JSONDecoder().decode(DocumentReference.self, from: Data(json.utf8))
                 }
-                let fileRows = try Row.fetchAll(
-                    db,
-                    sql: """
-                        SELECT path, line, end_line, sha FROM file_references
-                        WHERE session_id = ? AND message_id = ? ORDER BY position
-                        """,
-                    arguments: [sessionId, id])
                 return ChatMessage(
                     id: id, kind: kind, timestamp: row["timestamp"], text: row["text"],
                     reference: reference,
-                    files: fileRows.map {
-                        FileReference(path: $0["path"], line: $0["line"], endLine: $0["end_line"], sha: $0["sha"])
-                    },
+                    files: filesByMessage[id] ?? [],
                     read: row["read"], decisionStatus: decisionStatus)
             }
         }
@@ -1133,12 +1141,17 @@ public final class ChronicleStore: Sendable {
                 integrationInstalled: integrationInstalled(),
                 availableCallId: availableCall)
         }
+        // An unreadable notes file degrades to an empty handoff plus a banner;
+        // throwing here would leave the UI permanently stuck re-raising the
+        // same error on every refresh.
         let markdown: String
+        var notesError: String?
         do {
             markdown = try String(contentsOfFile: session.notesPath, encoding: .utf8)
         } catch {
-            throw ChronicleError(
-                "cannot read notes document \(session.notesPath): \(error.localizedDescription)")
+            markdown = ""
+            notesError =
+                "Cannot read the notes document \(session.notesPath): \(error.localizedDescription)"
         }
         let sources = try sourceHealth(sessionId: session.id)
         let tupleStatus = sources.first { $0.source == SourceName.tuple }?.status
@@ -1157,6 +1170,12 @@ public final class ChronicleStore: Sendable {
         let agentWorkingSince =
             session.state == .active || session.state == .finalizing
             ? try agentWorkingSince(sessionId: session.id) : nil
+        // A completed/interrupted session on screen should not hide a newly
+        // detected call; the collector keeps `tuple_available_call` current
+        // whenever no active/finalizing session exists.
+        let availableCall =
+            session.state == .complete || session.state == .interrupted
+            ? try availableTupleCall() : nil
         return AppSnapshot(
             mode: mode, sessionId: session.id, sessionState: session.state,
             notesPath: session.notesPath, repoPath: session.repoPath,
@@ -1167,7 +1186,18 @@ public final class ChronicleStore: Sendable {
             ideRoot: ideRoot.path, ideRegistryFound: registryFound,
             integrationInstalled: integrationInstalled(),
             handoffSaved: handoffSaved,
-            agentWorkingSince: agentWorkingSince)
+            agentWorkingSince: agentWorkingSince,
+            availableCallId: availableCall,
+            notesError: notesError,
+            ideSkipAvailable: ideSkipAvailable(sessionId: session.id))
+    }
+
+    private func ideSkipAvailable(sessionId: String) -> Bool {
+        guard let state = try? sourceState(sessionId: sessionId, source: SourceName.chronicle),
+            state.status == "error", let json = state.cursorJson,
+            let cursor = try? JSONDecoder().decode(IDECursor.self, from: Data(json.utf8))
+        else { return false }
+        return cursor.failedNext != nil
     }
 
     public func sessionSummaries() throws -> [SessionSummary] {
@@ -1194,7 +1224,8 @@ public final class ChronicleStore: Sendable {
                 startedAt: row["started_at"], updatedAt: row["updated_at"],
                 attachedRepo: row["repo_path"],
                 hasUnsavedHandoff: !markdown.isEmpty && savedHash != SHA256Hex.hash(markdown),
-                dataPruned: row["data_pruned"])
+                dataPruned: row["data_pruned"],
+                hasHandoff: !markdown.isEmpty)
         }
     }
 

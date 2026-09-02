@@ -120,10 +120,14 @@ public struct SessionSummary: Codable, Sendable, Equatable, Identifiable {
     public var attachedRepo: String?
     public var hasUnsavedHandoff: Bool
     public var dataPruned: Bool
+    /// The internal notes file still has content. Retention keeps the notes of
+    /// a pruned-but-unsaved session, so Save As and drag-out stay available.
+    public var hasHandoff: Bool
 
     public init(
         id: String, state: SessionState, startedAt: String, updatedAt: String,
-        attachedRepo: String? = nil, hasUnsavedHandoff: Bool = false, dataPruned: Bool = false
+        attachedRepo: String? = nil, hasUnsavedHandoff: Bool = false, dataPruned: Bool = false,
+        hasHandoff: Bool = false
     ) {
         self.id = id
         self.state = state
@@ -132,6 +136,7 @@ public struct SessionSummary: Codable, Sendable, Equatable, Identifiable {
         self.attachedRepo = attachedRepo
         self.hasUnsavedHandoff = hasUnsavedHandoff
         self.dataPruned = dataPruned
+        self.hasHandoff = hasHandoff
     }
 }
 
@@ -266,8 +271,15 @@ public struct AppSnapshot: Codable, Sendable, Equatable {
     /// When set, the agent signaled `chronicle working` and no feed item has
     /// arrived since; the UI shows a typing indicator.
     public var agentWorkingSince: String?
-    /// In `waitingCall` mode, the Tuple call a Start Session action would join.
+    /// In `waitingCall` mode — or while a completed/interrupted session is
+    /// still on screen — the Tuple call a Start Session action would join.
     public var availableCallId: String?
+    /// Set when the session's notes file could not be read; the snapshot then
+    /// carries empty markdown instead of failing outright.
+    public var notesError: String?
+    /// The IDE log stopped on a bad record and a resume point is stored; the
+    /// error banner offers to skip it.
+    public var ideSkipAvailable: Bool
 
     public init(
         mode: AppMode, sessionId: String? = nil, sessionState: SessionState? = nil,
@@ -277,7 +289,9 @@ public struct AppSnapshot: Codable, Sendable, Equatable {
         ideRoot: String = "", ideRegistryFound: Bool = false,
         integrationInstalled: Bool = false, handoffSaved: Bool = false,
         agentWorkingSince: String? = nil,
-        availableCallId: String? = nil
+        availableCallId: String? = nil,
+        notesError: String? = nil,
+        ideSkipAvailable: Bool = false
     ) {
         self.mode = mode
         self.sessionId = sessionId
@@ -295,5 +309,7 @@ public struct AppSnapshot: Codable, Sendable, Equatable {
         self.handoffSaved = handoffSaved
         self.agentWorkingSince = agentWorkingSince
         self.availableCallId = availableCallId
+        self.notesError = notesError
+        self.ideSkipAvailable = ideSkipAvailable
     }
 }

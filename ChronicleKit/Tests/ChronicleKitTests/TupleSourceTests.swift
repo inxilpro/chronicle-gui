@@ -106,7 +106,7 @@ import Testing
                   '{"type":"transcription_finished","time":"2026-09-01T12:00:09.000Z","data":{"start":"2026-09-01T12:00:01.000Z","user_id":"u1","text":"Hello"}}' \\
                   '{"kind":"status","status":"call_ended"}'
                 """)
-        try Collector.collectOnce(store: home.store, tuple: tuple, timeout: "1ms")
+        try Collector.collectOnce(store: home.store, provider: tuple, timeout: "1ms")
         let args = try String(contentsOf: recordedArgs, encoding: .utf8)
         for expected in [
             "transcription show call-mock", "--wait", "--with-events",
@@ -133,7 +133,7 @@ import Testing
                 echo 'transcription is not running' >&2
                 exit 1
                 """)
-        try Collector.collectOnce(store: home.store, tuple: tuple, timeout: "1ms")
+        try Collector.collectOnce(store: home.store, provider: tuple, timeout: "1ms")
         var health = try home.store.sourceHealth(sessionId: "call-mock")[0]
         #expect(health.status == "waiting")
         #expect(health.detail?.contains("start it in Tuple") == true)
@@ -227,7 +227,7 @@ import Testing
         let home = try TestHome()
         let tuple = TupleClient(executable: home.scratch("missing-tuple"))
         #expect(throws: (any Error).self) {
-            try Collector.collectOnce(store: home.store, tuple: tuple, timeout: "1ms")
+            try Collector.collectOnce(store: home.store, provider: tuple, timeout: "1ms")
         }
         let snapshot = try home.store.snapshot()
         #expect(snapshot.sources[0].status == "error")
@@ -269,6 +269,82 @@ import Testing
         try TupleClient.escalatePersistentGap(
             store: home.store, session: session, now: dropTime.addingTimeInterval(90))
         #expect(try home.store.sourceState(sessionId: session.id, source: "tuple")?.status == "live")
+    }
+
+    @Test func lateDeliveredSpeechThatStartedBeforeADropStillClearsTheGap() throws {
+        let home = try TestHome()
+        let session = try home.store.createOrResumeSession(callId: "call-gap-late")
+        try home.store.setSourceState(
+            sessionId: session.id, source: "tuple", status: "live", detail: "Transcription is live.")
+        try home.store.insertSourceEvents(
+            sessionId: session.id,
+            events: [
+                NormalizedEvent(
+                    stableId: "gap-1", source: "tuple",
+                    occurredAt: "2026-09-01T12:00:05.000Z", observedAt: "2026-09-01T12:00:05.000Z",
+                    kind: "transcription_dropped", payload: .object([:]))
+            ])
+        // A long segment spoken across the drop: it started before the drop
+        // (earlier occurred_at) but was delivered after it. Freshness goes by
+        // arrival, so this proves the stream recovered.
+        try home.store.insertSourceEvents(
+            sessionId: session.id,
+            events: [makeEvent("speech-late", occurredAt: "2026-09-01T12:00:02.000Z")])
+        let dropTime = ChronicleTimestamp.date(from: "2026-09-01T12:00:05.000Z")!
+        try TupleClient.escalatePersistentGap(
+            store: home.store, session: session, now: dropTime.addingTimeInterval(90))
+        #expect(try home.store.sourceState(sessionId: session.id, source: "tuple")?.status == "live")
+    }
+
+    @Test func spooledBatchSurvivesACrashedPassAndDrainsOnTheNext() throws {
+        let home = try TestHome()
+        let session = try home.store.createOrResumeSession(callId: "call-spool")
+        // A batch a crashed pass spooled but never committed: Tuple's cursor
+        // has moved past it, so the file is the only copy.
+        let spoolDir = home.store.paths.spoolDirectory
+        try FileManager.default.createDirectory(at: spoolDir, withIntermediateDirectories: true)
+        let orphan = spoolDir.appendingPathComponent("tuple-call-spool-000000000000001-x.ndjson")
+        try Data(
+            "{\"type\":\"transcription_finished\",\"time\":\"2026-09-01T12:00:09.000Z\",\"data\":{\"start\":\"2026-09-01T12:00:01.000Z\",\"user_id\":\"u1\",\"text\":\"Recovered\"}}\n"
+                .utf8
+        ).write(to: orphan)
+
+        let tuple = try makeTupleMock(
+            in: home.root,
+            body: """
+                if [ "$1" = "call" ]; then
+                  printf '%s\\n' '{"id":"call-spool"}'
+                  exit 0
+                fi
+                exit 0
+                """)
+        try Collector.collectOnce(store: home.store, provider: tuple, timeout: "1ms")
+        let result = try home.store.show(sessionId: session.id, consumer: "spool-test", limit: 10)
+        #expect(result.events.map(\.kind) == ["speech"])
+        #expect(result.events[0].payload["text"]?.stringValue == "Recovered")
+        #expect(!FileManager.default.fileExists(atPath: orphan.path))
+    }
+
+    @Test func successfulPassLeavesNoSpoolFileBehind() throws {
+        let home = try TestHome()
+        _ = try home.store.createOrResumeSession(callId: "call-clean")
+        let tuple = try makeTupleMock(
+            in: home.root,
+            body: """
+                if [ "$1" = "call" ]; then
+                  printf '%s\\n' '{"id":"call-clean"}'
+                  exit 0
+                fi
+                printf '%s\\n' '{"type":"transcription_finished","time":"2026-09-01T12:00:09.000Z","data":{"start":"2026-09-01T12:00:01.000Z","user_id":"u1","text":"Hello"}}'
+                """)
+        try Collector.collectOnce(store: home.store, provider: tuple, timeout: "1ms")
+        let session = try #require(try home.store.currentSession())
+        let result = try home.store.show(sessionId: session.id, consumer: "clean-test", limit: 10)
+        #expect(result.events.map(\.kind) == ["speech"])
+        let spooled =
+            (try? FileManager.default.contentsOfDirectory(
+                at: home.store.paths.spoolDirectory, includingPropertiesForKeys: nil)) ?? []
+        #expect(spooled.isEmpty)
     }
 
     @Test func missingCallInfersTheEndAfterTheGracePeriod() throws {
@@ -320,7 +396,7 @@ import Testing
     @Test func collectorWithoutStartSessionsOnlyRecordsAvailability() throws {
         let home = try TestHome()
         try Collector.collectOnce(
-            store: home.store, tuple: FakeTuple(callId: "call-live"), timeout: "1ms",
+            store: home.store, provider: FakeTuple(callId: "call-live"), timeout: "1ms",
             startSessions: false)
         // The GUI collector never creates a session; it offers the call to
         // the waiting screen's Start Session button instead.
@@ -334,7 +410,7 @@ import Testing
         // An explicit start consumes the availability.
         _ = try home.store.createOrResumeSession(callId: "call-live")
         try Collector.collectOnce(
-            store: home.store, tuple: FakeTuple(callId: "call-live"), timeout: "1ms",
+            store: home.store, provider: FakeTuple(callId: "call-live"), timeout: "1ms",
             startSessions: false)
         #expect(try home.store.availableTupleCall() == nil)
         #expect(try home.store.currentSession()?.id == "call-live")
@@ -344,10 +420,25 @@ import Testing
         try home.store.finishSession("call-live")
         try home.store.deselectTerminalSession()
         try Collector.collectOnce(
-            store: home.store, tuple: FakeTuple(callId: nil), timeout: "1ms",
+            store: home.store, provider: FakeTuple(callId: nil), timeout: "1ms",
             startSessions: false)
         #expect(try home.store.availableTupleCall() == nil)
         #expect(try home.store.snapshot().sources[0].status == "waiting")
+    }
+
+    @Test func newCallStaysVisibleWhileACompletedSessionIsOnScreen() throws {
+        let home = try TestHome()
+        _ = try home.store.createOrResumeSession(callId: "call-done")
+        try home.store.endCallWithoutTupleRecord("call-done", reason: "user_request")
+        try home.store.finishSession("call-done")
+        // The finished session stays selected (the user is reviewing the
+        // plan), while Tuple starts a new call.
+        try Collector.collectOnce(
+            store: home.store, provider: FakeTuple(callId: "call-next"), timeout: "1ms",
+            startSessions: false)
+        let snapshot = try home.store.snapshot()
+        #expect(snapshot.mode == .complete)
+        #expect(snapshot.availableCallId == "call-next")
     }
 
     @Test func collectorWithoutStartSessionsNeverSwitchesCalls() throws {
@@ -356,7 +447,7 @@ import Testing
         // Tuple has moved on to another call; the tracked session stays put
         // and the missing-call grace timer runs instead of auto-switching.
         try Collector.collectOnce(
-            store: home.store, tuple: FakeTuple(callId: "call-b"), timeout: "1ms",
+            store: home.store, provider: FakeTuple(callId: "call-b"), timeout: "1ms",
             startSessions: false)
         #expect(try home.store.currentSession()?.id == "call-a")
         #expect(try home.store.session(session.id).state == .active)
@@ -379,7 +470,7 @@ import Testing
                 touch '\(flag.path)'
                 printf '%s\\n' '{"kind":"status","status":"call_ended"}'
                 """)
-        try Collector.collectOnce(store: home.store, tuple: tuple, timeout: "1ms")
+        try Collector.collectOnce(store: home.store, provider: tuple, timeout: "1ms")
         #expect(FileManager.default.fileExists(atPath: flag.path))
         #expect(try home.store.session("call-gone").state == .finalizing)
     }

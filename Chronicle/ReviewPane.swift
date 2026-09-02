@@ -91,6 +91,21 @@ struct ReviewPane: View {
                         .controlSize(.small)
                 }
             }
+            if let notesError = model.snapshot.notesError {
+                Banner(icon: "doc.badge.ellipsis", tint: .red) {
+                    Text(notesError)
+                } accessory: {
+                }
+            }
+            if model.sessionIsTerminal, model.snapshot.availableCallId != nil {
+                Banner(icon: "phone.badge.waveform", tint: .green) {
+                    Text("A new Tuple call is in progress.")
+                } accessory: {
+                    Button("Start Session") { model.startSession() }
+                        .controlSize(.small)
+                        .help("Put this session away and follow the new call")
+                }
+            }
             if let warning = model.collectorWarning {
                 Banner(icon: "exclamationmark.triangle", tint: .orange) {
                     Text(warning)
@@ -119,6 +134,13 @@ struct ReviewPane: View {
                         Button("End Session…") { model.confirmEndSession = true }
                             .controlSize(.small)
                             .help("Finalize now if the call is actually over")
+                    }
+                    if source.source == SourceName.chronicle, source.status == "error",
+                        model.snapshot.ideSkipAvailable
+                    {
+                        Button("Skip Bad Record") { model.skipIDERecord() }
+                            .controlSize(.small)
+                            .help("Drop the unreadable IDE record and resume the feed behind it")
                     }
                 }
             }
