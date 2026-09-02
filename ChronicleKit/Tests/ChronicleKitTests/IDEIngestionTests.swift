@@ -103,7 +103,8 @@ import Testing
     }
 
     @Test func toleratesOnlyAnIncompleteFinalLine() throws {
-        let firstTwo = Data(Fixtures.logLines[0] + [UInt8(ascii: "\n")] + Fixtures.logLines[1] + [UInt8(ascii: "\n")])
+        let newline = Data("\n".utf8)
+        let firstTwo = Fixtures.logLines[0] + newline + Fixtures.logLines[1] + newline
         var truncated = firstTwo
         truncated.append(Data("{\"schemaVersion\":1".utf8))
         let chunk = try IDEIngestion.parseChunk(
