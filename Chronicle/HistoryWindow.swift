@@ -28,25 +28,7 @@ struct HistoryView: View {
     var body: some View {
         Table(sessions, selection: $selection, sortOrder: sortBinding) {
             TableColumn("Session", value: \.repoSortKey) { session in
-                HStack(spacing: 6) {
-                    Text(repoName(session))
-                        .fontWeight(.medium)
-                    if session.hasUnsavedHandoff {
-                        Text("Unsaved")
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(.orange.opacity(0.2), in: Capsule())
-                            .foregroundStyle(.orange)
-                    }
-                    if session.dataPruned {
-                        Text("Details expired")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .draggable(dragPayload(for: session))
-                .accessibilityLabel(accessibilityLabel(session))
+                sessionCell(session)
             }
             TableColumn("State", value: \.stateSortKey) { session in
                 Text(session.state.displayName)
@@ -126,8 +108,7 @@ struct HistoryView: View {
     private func contextMenu(for id: SessionSummary.ID) -> some View {
         Button("Open") { open(id) }
         Button("Save Handoff As…") {
-            model.openHistorySession(id)
-            model.saveHandoffAs()
+            model.saveHandoffAs(sessionId: id)
         }
         .disabled(!canSave(id))
         Button("Copy Call ID") {
@@ -165,8 +146,34 @@ struct HistoryView: View {
         return (repo as NSString).lastPathComponent
     }
 
-    private func dragPayload(for session: SessionSummary) -> HandoffFileTransfer {
-        HandoffFileTransfer(markdown: model.markdownForSession(session.id) ?? "")
+    /// Pruned sessions have no notes left to drag, so they get no drag at all
+    /// rather than an empty file.
+    @ViewBuilder
+    private func sessionCell(_ session: SessionSummary) -> some View {
+        let label = HStack(spacing: 6) {
+            Text(repoName(session))
+                .fontWeight(.medium)
+            if session.hasUnsavedHandoff {
+                Text("Unsaved")
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(.orange.opacity(0.2), in: Capsule())
+                    .foregroundStyle(.orange)
+            }
+            if session.dataPruned {
+                Text("Details expired")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .accessibilityLabel(accessibilityLabel(session))
+        if session.dataPruned {
+            label
+        } else {
+            label.draggable(
+                HandoffFileTransfer(notesPath: model.notesPath(forSession: session.id)))
+        }
     }
 
     private func accessibilityLabel(_ session: SessionSummary) -> String {

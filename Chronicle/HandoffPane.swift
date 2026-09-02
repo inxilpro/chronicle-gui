@@ -21,11 +21,7 @@ struct HandoffPane: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("Planning handoff")
-                .font(.title3.weight(.semibold))
-                .accessibilityHeading(.h2)
-                .draggable(HandoffFileTransfer(markdown: model.snapshot.markdown))
-                .help("Drag out a planning-handoff.md file")
+            title
             if planReady {
                 Text("Plan ready")
                     .font(.callout.weight(.medium))
@@ -76,6 +72,22 @@ struct HandoffPane: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    /// An empty handoff has nothing worth dragging, so the title only becomes
+    /// a drag source once there is content.
+    @ViewBuilder
+    private var title: some View {
+        let text = Text("Planning handoff")
+            .font(.title3.weight(.semibold))
+            .accessibilityHeading(.h2)
+        if model.hasHandoffContent {
+            text
+                .draggable(HandoffFileTransfer(markdown: model.snapshot.markdown))
+                .help("Drag out a planning-handoff.md file")
+        } else {
+            text
+        }
     }
 
     // MARK: - Body

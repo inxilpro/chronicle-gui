@@ -24,7 +24,7 @@ Companion to [SPEC.md](SPEC.md) §7. This is the design contract for the SwiftUI
 | Window | Scene | Notes |
 | --- | --- | --- |
 | **Chronicle** (main) | `Window` (single) | Split: Review stream (left, 320–560 pt, persisted) + Planning handoff (right). Waiting states replace content with centered guidance. Min 800×600, default 1200×800. Full restoration. |
-| **History** | `Window`, ⌥⌘H | Recent sessions list. Selecting a terminal session loads it in the main window. Delete with confirmation. Not a popover — it's a real window a user may keep open. |
+| **History** | `Window`, ⌘Y | Recent sessions list. Selecting a terminal session loads it in the main window. Delete with confirmation. Not a popover — it's a real window a user may keep open. |
 | **Settings** | `Settings` scene, ⌘, | Tabs: General, Integration, Updates. |
 | **About** | standard | Standard about panel with a one-line credits tagline. |
 
@@ -163,10 +163,12 @@ Body: rendered Markdown (native SwiftUI text, selectable). Requirements:
 - **Session**: **Mark All as Read** ⇧⌘U (disabled at 0 unread) · **Approve Decision** ⌘⏎ /
   **Reject Decision** ⌘⌫ (enabled when a decision row is focused & unreviewed) ·
   **Install Claude Integration…** (renames to Reinstall… when installed) · separator ·
+  **End Session…** ⇧⌘E (active/finalizing; retitles to Finish Session… while finalizing) ·
+  **Close Session** (terminal — back to the waiting screen, session stays in History) ·
   **Delete Session…** (terminal sessions only).
-- **View**: Toggle Review Pane ⌥⌘1 · Actual Size ⌘0 / Zoom In ⌘+ / Zoom Out ⌘− (handoff text)
-  · standard toolbar/sidebar items if applicable.
-- **Window**: standard + **History** ⌥⌘H.
+- **View**: Toggle Review Pane ⌥⌘1 · Actual Size ⌘0 / Zoom In ⌘+ / Zoom Out ⌘− (handoff text;
+  validate at the scale limits) · standard toolbar/sidebar items if applicable.
+- **Window**: standard + **History** ⌘Y (Safari's History shortcut; ⌥⌘H belongs to Hide Others).
 - **Help**: Chronicle Help (opens README/docs), link to wire contract.
 
 Command availability via focused-scene state; all items validate (disabled, never missing).

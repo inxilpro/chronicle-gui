@@ -54,9 +54,18 @@ nonisolated extension UTType {
     }
 }
 
-/// Drag-out payload: a promised `planning-handoff.md` file containing the handoff.
+/// Drag-out payload: a promised `planning-handoff.md` file containing the
+/// handoff — markdown captured up front, or a notes path read only when the
+/// drop actually lands (History rows would otherwise read every session's
+/// notes file on each render).
 nonisolated struct HandoffFileTransfer: Transferable {
-    var markdown: String
+    var markdown: String? = nil
+    var notesPath: String? = nil
+
+    private var resolvedMarkdown: String {
+        if let markdown { return markdown }
+        return notesPath.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) } ?? ""
+    }
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(exportedContentType: .chronicleMarkdown) { transfer in
@@ -64,11 +73,11 @@ nonisolated struct HandoffFileTransfer: Transferable {
                 .appendingPathComponent("chronicle-drag-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let file = directory.appendingPathComponent("planning-handoff.md")
-            try Data(transfer.markdown.utf8).write(to: file)
+            try Data(transfer.resolvedMarkdown.utf8).write(to: file)
             return SentTransferredFile(file)
         }
         DataRepresentation(exportedContentType: .plainText) { transfer in
-            Data(transfer.markdown.utf8)
+            Data(transfer.resolvedMarkdown.utf8)
         }
     }
 }

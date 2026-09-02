@@ -19,7 +19,8 @@ struct ChronicleApp: App {
         Window("History", id: "history") {
             HistoryView(model: model)
         }
-        .keyboardShortcut("h", modifiers: [.command, .option])
+        // ⌘Y matches Safari's History; ⌥⌘H would shadow the system's Hide Others.
+        .keyboardShortcut("y")
         .defaultSize(width: 600, height: 420)
 
         Settings {

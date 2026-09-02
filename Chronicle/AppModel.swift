@@ -443,7 +443,6 @@ final class AppModel {
         guard hasHandoffContent else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.declareTypes([.string, .rtf], owner: nil)
         pasteboard.setString(markdown, forType: .string)
         let rich = HandoffTextBuilder.build(document: handoff, scale: 1).text
         if let rtf = try? rich.data(
@@ -454,8 +453,8 @@ final class AppModel {
         }
     }
 
-    func saveHandoffAs() {
-        guard let store, let sessionId = snapshot.sessionId else { return }
+    func saveHandoffAs(sessionId: String? = nil) {
+        guard let store, let sessionId = sessionId ?? snapshot.sessionId else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.chronicleMarkdown]
         panel.allowsOtherFileTypes = false
@@ -471,8 +470,14 @@ final class AppModel {
         }
     }
 
+    static let textScaleRange: ClosedRange<Double> = 0.5...3
+
+    var canZoomIn: Bool { textScale < Self.textScaleRange.upperBound }
+    var canZoomOut: Bool { textScale > Self.textScaleRange.lowerBound }
+
     func setTextScale(_ scale: Double) {
-        let clamped = min(max(scale, 0.5), 3)
+        let clamped = min(
+            max(scale, Self.textScaleRange.lowerBound), Self.textScaleRange.upperBound)
         guard clamped != textScale else { return }
         textScale = clamped
         UserDefaults.standard.set(clamped, forKey: SettingsKey.handoffTextScale)
@@ -561,9 +566,9 @@ final class AppModel {
         }
     }
 
-    func markdownForSession(_ id: String) -> String? {
-        guard let store, let record = try? store.session(id) else { return nil }
-        return try? String(contentsOfFile: record.notesPath, encoding: .utf8)
+    func notesPath(forSession id: String) -> String? {
+        guard let store else { return nil }
+        return try? store.session(id).notesPath
     }
 
     func selectIDECandidate(_ candidateId: String) {

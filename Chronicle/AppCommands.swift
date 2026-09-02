@@ -91,8 +91,10 @@ struct AppCommands: Commands {
                 .disabled(model.textScale == 1)
             Button("Zoom In") { model.zoomIn() }
                 .keyboardShortcut("+")
+                .disabled(!model.canZoomIn)
             Button("Zoom Out") { model.zoomOut() }
                 .keyboardShortcut("-")
+                .disabled(!model.canZoomOut)
             Divider()
         }
 
