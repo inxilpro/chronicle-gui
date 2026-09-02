@@ -385,15 +385,41 @@ public final class ChronicleStore: Sendable {
         }
     }
 
+    // MARK: - Working indicator
+
+    /// A signal with no matching clear (a crashed agent) must not glow forever.
+    public static let agentWorkingExpiry: TimeInterval = 120
+
+    /// `chronicle working`: the agent is about to do background work. The GUI
+    /// renders a typing indicator until the next chat message lands, the
+    /// session finishes, or the signal expires unrefreshed.
+    public func signalAgentWorking(sessionId: String, now: Date = Date()) throws {
+        try setSetting("agent_working", to: "\(ChronicleTimestamp.string(from: now))|\(sessionId)")
+    }
+
+    public func agentWorkingSince(sessionId: String, now: Date = Date()) throws -> String? {
+        guard let value = try setting("agent_working") else { return nil }
+        let parts = value.split(separator: "|", maxSplits: 1).map(String.init)
+        guard parts.count == 2, parts[1] == sessionId,
+            let since = ChronicleTimestamp.date(from: parts[0]),
+            now.timeIntervalSince(since) < Self.agentWorkingExpiry
+        else { return nil }
+        return parts[0]
+    }
+
     public func finishSession(_ sessionId: String) throws {
         let timestamp = ChronicleTimestamp.now()
         let changed = try write { db in
-            try db.executeWithChanges(
+            let changed = try db.executeWithChanges(
                 sql: """
                     UPDATE sessions SET state = 'complete', finished_at = ?, updated_at = ?
                     WHERE id = ? AND state = 'finalizing'
                     """,
                 arguments: [timestamp, timestamp, sessionId])
+            if changed > 0 {
+                try db.execute(sql: "DELETE FROM settings WHERE key = 'agent_working'")
+            }
+            return changed
         }
         if changed == 0 {
             switch try session(sessionId).state {
@@ -761,6 +787,8 @@ public final class ChronicleStore: Sendable {
                         """,
                     arguments: [sessionId, message.id, position, file.path, file.line, file.endLine, file.sha])
             }
+            // The new feed item is the feedback the working indicator promised.
+            try db.execute(sql: "DELETE FROM settings WHERE key = 'agent_working'")
             try db.execute(
                 sql: "UPDATE sessions SET updated_at = ? WHERE id = ?",
                 arguments: [ChronicleTimestamp.now(), sessionId])
@@ -1126,6 +1154,9 @@ public final class ChronicleStore: Sendable {
         let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
         let handoffSaved =
             !trimmed.isEmpty && session.savedHash == SHA256Hex.hash(Data(markdown.utf8))
+        let agentWorkingSince =
+            session.state == .active || session.state == .finalizing
+            ? try agentWorkingSince(sessionId: session.id) : nil
         return AppSnapshot(
             mode: mode, sessionId: session.id, sessionState: session.state,
             notesPath: session.notesPath, repoPath: session.repoPath,
@@ -1135,7 +1166,8 @@ public final class ChronicleStore: Sendable {
             ideCandidates: try ideCandidates(sessionId: session.id),
             ideRoot: ideRoot.path, ideRegistryFound: registryFound,
             integrationInstalled: integrationInstalled(),
-            handoffSaved: handoffSaved)
+            handoffSaved: handoffSaved,
+            agentWorkingSince: agentWorkingSince)
     }
 
     public func sessionSummaries() throws -> [SessionSummary] {

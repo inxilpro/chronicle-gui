@@ -42,6 +42,7 @@ let chronicleUsage = """
       chronicle session current --json
       chronicle session finish
       chronicle show [--wait] --cursor <name> [--timeout <duration>] [--limit <count>]
+      chronicle working
       chronicle say <text> [--ref-heading <A>B>] [--ref-snippet <text>] [--file <path[:line[-end]]>]...
       chronicle ack <text> [--file <path[:line[-end]]>]...
       chronicle decision <text> --id <id> [--ref-heading <A>B>] [--ref-snippet <text>] [--file <path[:line[-end]]>]...
@@ -65,8 +66,8 @@ public struct ChronicleCommand: ParsableCommand, ChronicleExecutable {
         repository.
         """,
         subcommands: [
-            SessionCommand.self, ShowCommand.self, SayCommand.self, AckCommand.self,
-            DecisionCommand.self, UnlinkCommand.self, ReadCommand.self,
+            SessionCommand.self, ShowCommand.self, WorkingCommand.self, SayCommand.self,
+            AckCommand.self, DecisionCommand.self, UnlinkCommand.self, ReadCommand.self,
         ]
     )
 
@@ -231,6 +232,20 @@ func validateTimeout(_ value: String) throws -> Int {
         throw ChronicleError("--timeout must be between 1ms and 5m")
     }
     return Int(milliseconds)
+}
+
+// MARK: - working
+
+struct WorkingCommand: ParsableCommand, ChronicleExecutable {
+    static let configuration = CommandConfiguration(
+        commandName: "working",
+        abstract: "Show the room that background work is happening.")
+
+    func execute(context: CLIContext) throws -> String {
+        let session = try Collector.ensureCurrentSession(store: context.store, tuple: context.tuple)
+        try context.store.signalAgentWorking(sessionId: session.id, now: context.now())
+        return "working"
+    }
 }
 
 // MARK: - say / ack / decision

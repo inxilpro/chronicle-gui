@@ -14,6 +14,7 @@ struct AppCommands: Commands {
         CommandGroup(replacing: .appInfo) {
             Button("About Chronicle") { showAbout() }
             Button("Check for Updates…") { updater.checkForUpdates() }
+                .disabled(!BuildFlags.sparkleEnabled)
         }
 
         // File

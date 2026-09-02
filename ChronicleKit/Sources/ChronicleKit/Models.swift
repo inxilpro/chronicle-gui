@@ -263,6 +263,9 @@ public struct AppSnapshot: Codable, Sendable, Equatable {
     public var ideRegistryFound: Bool
     public var integrationInstalled: Bool
     public var handoffSaved: Bool
+    /// When set, the agent signaled `chronicle working` and no feed item has
+    /// arrived since; the UI shows a typing indicator.
+    public var agentWorkingSince: String?
     /// In `waitingCall` mode, the Tuple call a Start Session action would join.
     public var availableCallId: String?
 
@@ -273,6 +276,7 @@ public struct AppSnapshot: Codable, Sendable, Equatable {
         sessions: [SessionSummary] = [], ideCandidates: [IDESessionCandidate] = [],
         ideRoot: String = "", ideRegistryFound: Bool = false,
         integrationInstalled: Bool = false, handoffSaved: Bool = false,
+        agentWorkingSince: String? = nil,
         availableCallId: String? = nil
     ) {
         self.mode = mode
@@ -289,6 +293,7 @@ public struct AppSnapshot: Codable, Sendable, Equatable {
         self.ideRegistryFound = ideRegistryFound
         self.integrationInstalled = integrationInstalled
         self.handoffSaved = handoffSaved
+        self.agentWorkingSince = agentWorkingSince
         self.availableCallId = availableCallId
     }
 }

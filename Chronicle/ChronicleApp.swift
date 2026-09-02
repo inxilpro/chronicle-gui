@@ -5,7 +5,7 @@ import Sparkle
 struct ChronicleApp: App {
     @State private var model = AppModel()
     private let updaterController = SPUStandardUpdaterController(
-        startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        startingUpdater: BuildFlags.sparkleEnabled, updaterDelegate: nil, userDriverDelegate: nil)
 
     var body: some Scene {
         Window("Chronicle", id: "main") {

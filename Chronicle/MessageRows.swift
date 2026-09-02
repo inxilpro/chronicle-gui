@@ -65,15 +65,14 @@ struct MessageRow: View {
 
 /// Card row for `decision` messages. Unreviewed cards carry the Approve/Reject
 /// surface; reviewed cards keep their box but drop the buttons and status line,
-/// fading behind a state icon and title instead.
+/// fading behind a state icon and title instead. The linked handoff section is
+/// reachable through the context menu's Jump to Section, not an inline link.
 struct DecisionRow: View {
     var message: ChatMessage
     var status: DecisionStatus
     var isSelected: Bool
-    var isStale: Bool
     var onApprove: () -> Void
     var onReject: () -> Void
-    var onOpenReference: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -92,9 +91,6 @@ struct DecisionRow: View {
                     .monospacedDigit()
             }
             Text(inlineMarkdown(message.text))
-            if let reference = message.reference, !isStale {
-                ReferenceLink(reference: reference, action: onOpenReference)
-            }
             if status == .unreviewed {
                 HStack(spacing: 8) {
                     Button("Approve", action: onApprove)
@@ -204,22 +200,37 @@ struct ReferenceChip: View {
     }
 }
 
-/// Quiet dotted-underline link on decision cards. Selecting the card is the
-/// primary way to jump to the notes; this is the visible hint and the re-click
-/// affordance once the card is already selected.
-struct ReferenceLink: View {
-    var reference: DocumentReference
-    var action: () -> Void
+/// The iMessage-style three-dot bubble shown at the bottom of the feed while
+/// the agent has signaled `chronicle working` and nothing new has landed yet.
+struct TypingIndicatorRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var animating = false
 
     var body: some View {
-        Button(action: action) {
-            Text(reference.heading.last ?? "Handoff")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .underline(pattern: .dot)
+        HStack {
+            HStack(spacing: 5) {
+                ForEach(0..<3) { index in
+                    Circle()
+                        .fill(.secondary)
+                        .frame(width: 7, height: 7)
+                        .opacity(animating ? 1 : 0.3)
+                        .animation(
+                            reduceMotion
+                                ? nil
+                                : .easeInOut(duration: 0.45)
+                                    .repeatForever(autoreverses: true)
+                                    .delay(Double(index) * 0.16),
+                            value: animating)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
-        .help("Show in the planning handoff")
-        .accessibilityLabel("Reference: \(reference.heading.last ?? "Handoff")")
+        .padding(.vertical, 2)
+        .onAppear { animating = true }
+        .accessibilityElement()
+        .accessibilityLabel("Claude is working")
     }
 }

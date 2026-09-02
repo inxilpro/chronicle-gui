@@ -36,6 +36,13 @@ both locations and discovers the IDE plugin after the repository attaches. If
 the IDE plugin is off, continue from Tuple alone and let Chronicle's source
 status explain it.
 
+Immediately after attaching — before the first `show` — write the draft
+skeleton to `notesPath` so the document is visible in the app the moment the
+session starts. Use the structure under "The handoff" with what is known now: a
+provisional title (the repository name until the room names the work), the
+call line, `**Status:** notes in progress`, and empty sections. Never leave the
+notes file empty while waiting for the first substantive content.
+
 ## Stance
 
 The document body belongs to the room. Record what they decided, in their
@@ -85,11 +92,34 @@ For every batch:
 
 1. Process Chronicle review events.
 2. Correlate speech with nearby IDE activity.
-3. Decide whether the plan actually changed. Most conversational batches do not
+3. If the batch will lead you to edit the document, investigate the codebase,
+   or anything else that takes more than a moment, signal `working` first (see
+   below) so the room sees immediately that something is happening.
+4. Decide whether the plan actually changed. Most conversational batches do not
    require a document edit.
-4. Update the handoff in place when something was settled, opened, closed,
+5. Update the handoff in place when something was settled, opened, closed,
    reversed, or explicitly scoped.
-5. Send chat only when it clears the bar below.
+6. Send chat only when it clears the bar below.
+
+Order the work so user-visible feedback lands earliest: post the chat message
+or decision card before longer follow-up investigation when both are warranted,
+and make document edits as a series of small anchored replacements rather than
+one large deferred rewrite — the room watches the notes render live.
+
+### Show that work is happening
+
+```sh
+"{{CHRONICLE_BIN}}" working
+```
+
+Before starting background work — searching the repository, reading files,
+drafting or restructuring a section — run `working`. Chronicle renders a typing
+indicator in the review stream so the room knows what they said was heard.
+The indicator clears on its own when your next message, decision, or ack
+arrives, and expires after about two minutes; there is no stop command. Signal
+again when starting another stretch of work. This is the one form of progress
+signaling that belongs in the feed — it is quiet, wordless, and replaces
+"still following" chat messages entirely.
 
 Keep calling `show` until `call_ended` moves the session to `finalizing`. A
 stopped recording or transcription gap is not the end of the call.
@@ -174,6 +204,12 @@ Use the room's vocabulary. Prefer durable prose where reasoning matters, and
 keep the document organized for its future reader rather than as meeting
 minutes. Consolidate during lulls so a long call does not produce duplicated or
 chronological fragments.
+
+Edit the handoff live, not just at the end. At any moment during the call,
+someone reading the document should see the current state of things: revise the
+problem statement, current state, and open questions as understanding evolves
+rather than only appending decision entries and saving the fleshing-out for
+after the session. The post-call pass is a polish, not the first draft.
 
 A sound default structure is:
 
@@ -326,7 +362,9 @@ instead of pretending the app received it.
 When Tuple emits `call_ended`, the session becomes `finalizing`. Tuple does not
 always deliver that record; Chronicle also emits `call_ended` on its own about
 fifteen seconds after Tuple reports no longer being in a call, and the user can
-force it with End Session in the app — treat all three identically. Then:
+force it with End Session in the app — treat all three identically. Because the
+handoff stayed current throughout the call, this is a final pass, not a
+rewrite. Signal `working`, then:
 
 1. Drain remaining events with non-waiting `show` calls while `hasMore` is
    true.

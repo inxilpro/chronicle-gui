@@ -66,6 +66,18 @@ struct WaitingView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
+            } else if model.integrationNeedsUpdate {
+                VStack(spacing: 6) {
+                    Text("This version of Chronicle ships a newer chronicle skill than the one installed.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Button("Update Claude Integration") {
+                        installRequested = true
+                        model.installIntegration()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                }
             } else if installRequested {
                 Button {
                 } label: {

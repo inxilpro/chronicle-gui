@@ -5,7 +5,7 @@
 	<key>SUFeedURL</key>
 	<string>https://github.com/inxilpro/chronicle-gui/releases/latest/download/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>REPLACE_WITH_SPARKLE_ED_PUBLIC_KEY</string>
+	<string>bA1sl1HrvwpXicvAwazlXX2ntAhNY+EnDGZWLl26il4=</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>LSApplicationCategoryType</key>

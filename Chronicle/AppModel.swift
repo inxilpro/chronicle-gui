@@ -66,8 +66,10 @@ final class AppModel {
     private var requestedNotificationPermission = false
     private var collectorTask: Task<Void, Never>?
     private var observationTask: Task<Void, Never>?
-    private var notesWatcher: NotesWatcher?
-    private var notesRefreshDebounce: Task<Void, Never>?
+    private var notesWatcher: FileWatcher?
+    private var databaseWatcher: FileWatcher?
+    private var watcherRefreshDebounce: Task<Void, Never>?
+    private var workingExpiryTask: Task<Void, Never>?
 
     init() {
         UserDefaults.standard.register(defaults: [
@@ -96,8 +98,10 @@ final class AppModel {
         // screen; stale actives demote before anything renders.
         try? store.deselectTerminalSession()
         _ = try? store.interruptStaleSessions(olderThan: 12 * 3600)
+        checkIntegrationUpdate()
         refresh()
         startObservation()
+        watchDatabase()
         startCollector()
     }
 
@@ -121,6 +125,10 @@ final class AppModel {
 
     var hasHandoffContent: Bool {
         !snapshot.markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var agentIsWorking: Bool {
+        snapshot.agentWorkingSince != nil
     }
 
     var sessionIsTerminal: Bool {
@@ -164,6 +172,7 @@ final class AppModel {
             notifications.process(snapshot: new, baseline: !didInitialRefresh)
             maybeRequestNotificationPermission(old: old, new: new)
             watchNotes(path: new.notesPath)
+            scheduleWorkingExpiry()
             didInitialRefresh = true
         } catch {
             actionError = (error as? ChronicleError)?.message ?? error.localizedDescription
@@ -202,6 +211,24 @@ final class AppModel {
         notifications.requestPermission()
     }
 
+    /// The store already filters out an expired working signal, but nothing
+    /// else would trigger the refresh that hides the indicator; time it.
+    private func scheduleWorkingExpiry() {
+        workingExpiryTask?.cancel()
+        workingExpiryTask = nil
+        guard let since = snapshot.agentWorkingSince,
+            let date = ChronicleTimestamp.date(from: since)
+        else { return }
+        let remaining = date.addingTimeInterval(ChronicleStore.agentWorkingExpiry)
+            .timeIntervalSinceNow
+        guard remaining > 0 else { return }
+        workingExpiryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(remaining + 0.1))
+            guard !Task.isCancelled else { return }
+            self?.refresh()
+        }
+    }
+
     // MARK: - Database observation
 
     private func startObservation() {
@@ -222,22 +249,34 @@ final class AppModel {
         }
     }
 
-    // MARK: - Notes file watching
+    // MARK: - File watching (notes + cross-process database writes)
+
+    /// GRDB's ValueObservation only sees writes made through this process's
+    /// pool, so CLI writes — a `say`, a `working` signal, `session finish` —
+    /// would otherwise sit unnoticed until this process happened to write.
+    /// Watching the SQLite WAL file turns every cross-process commit into a
+    /// near-immediate refresh.
+    private func watchDatabase() {
+        guard let store else { return }
+        databaseWatcher = FileWatcher(path: store.paths.databaseURL.path + "-wal") { [weak self] in
+            self?.scheduleWatcherRefresh()
+        }
+    }
 
     private func watchNotes(path: String?) {
         if notesWatcher?.path != path {
             notesWatcher = path.map { watched in
-                NotesWatcher(path: watched) { [weak self] in
-                    self?.scheduleNotesRefresh()
+                FileWatcher(path: watched) { [weak self] in
+                    self?.scheduleWatcherRefresh()
                 }
             }
         }
         notesWatcher?.rearmFileWatchIfNeeded()
     }
 
-    private func scheduleNotesRefresh() {
-        notesRefreshDebounce?.cancel()
-        notesRefreshDebounce = Task { [weak self] in
+    private func scheduleWatcherRefresh() {
+        watcherRefreshDebounce?.cancel()
+        watcherRefreshDebounce = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(120))
             guard !Task.isCancelled else { return }
             self?.refresh()
@@ -328,9 +367,10 @@ final class AppModel {
         }
     }
 
-    /// Selection is an intentional act: it marks the message read, tells the
-    /// skill which card the room is looking at, and — for decision cards —
-    /// jumps the handoff pane to the linked entry.
+    /// Selection is an intentional act: it marks the message read and tells
+    /// the skill which card the room is looking at. It deliberately does not
+    /// touch the handoff pane — jumping to the linked section is the context
+    /// menu's Jump to Section.
     private func handleFeedSelection() {
         guard let message = selectedMessage, message.kind != .ack else { return }
         if !message.read {
@@ -338,11 +378,6 @@ final class AppModel {
         }
         if let store, let sessionId = snapshot.sessionId {
             try? store.reportSelection(sessionId: sessionId, message: message)
-        }
-        if message.kind == .decision, message.reference != nil,
-            !staleReferenceIDs.contains(message.id)
-        {
-            openReference(message)
         }
     }
 
@@ -557,21 +592,32 @@ final class AppModel {
         do {
             try SkillInstaller.install(
                 executable: executable, shim: store.paths.shimURL, skill: store.paths.skillURL)
+            checkIntegrationUpdate()
             refresh()
         } catch {
             actionError = (error as? ChronicleError)?.message ?? error.localizedDescription
         }
     }
 
-    /// True when the installed skill file no longer matches the bundled template.
-    var integrationNeedsUpdate: Bool {
-        guard let store, snapshot.integrationInstalled else { return false }
-        guard let template = try? SkillInstaller.template(),
+    /// True when the installed skill file no longer matches the bundled
+    /// template. Checked at startup and after each install (not per render —
+    /// it compares files on disk); the waiting screen and review pane prompt
+    /// the user to update when set.
+    private(set) var integrationNeedsUpdate = false
+
+    private func checkIntegrationUpdate() {
+        guard let store,
+            SkillInstaller.integrationInstalled(
+                shim: store.paths.shimURL, skill: store.paths.skillURL),
+            let template = try? SkillInstaller.template(),
             let installed = try? String(contentsOf: store.paths.skillURL, encoding: .utf8)
-        else { return false }
+        else {
+            integrationNeedsUpdate = false
+            return
+        }
         let expected = template.replacingOccurrences(
             of: "{{CHRONICLE_BIN}}", with: store.paths.shimURL.path)
-        return installed != expected
+        integrationNeedsUpdate = installed != expected
     }
 
     func chooseIDEFolder() {
@@ -662,10 +708,12 @@ private nonisolated struct DBStamp: Equatable {
 
 // MARK: - Notes watcher
 
-/// Watches the session's notes.md (and its directory, to survive atomic
-/// replaces) with dispatch sources; markdown lives on disk, not in SQLite.
+/// Watches one file (and its directory, to survive atomic replaces) with
+/// dispatch sources. Used for the session's notes.md — markdown lives on
+/// disk, not in SQLite — and for the database WAL, which is how writes from
+/// the CLI process become visible without polling.
 @MainActor
-private final class NotesWatcher {
+private final class FileWatcher {
     let path: String
     private let onChange: () -> Void
     private var directorySource: DispatchSourceFileSystemObject?

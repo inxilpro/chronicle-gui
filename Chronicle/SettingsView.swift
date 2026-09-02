@@ -169,6 +169,7 @@ private struct UpdateSettings: View {
                     .onChange(of: automaticChecks) {
                         updater.automaticallyChecksForUpdates = automaticChecks
                     }
+                    .disabled(!BuildFlags.sparkleEnabled)
                 LabeledContent(
                     "Version:",
                     value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")

@@ -42,16 +42,19 @@ Centered column: app icon, eyebrow "Tuple call companion", heading + copy per mo
   collector reports an available call. Below the copy: the source strip, any Tuple discovery
   error, a prominent **Start Session** button (enabled only while a call is available —
   sessions start explicitly, never merely because the app was open during a call), and (when
-  integration is not installed) an **Install Claude Integration** button.
+  integration is not installed) an **Install Claude Integration** button — or, when the
+  installed skill no longer matches the bundled template, an **Update Claude Integration**
+  button with a one-line explanation.
 - If the IDE registry is missing: quiet note with a **Choose Chronicle Folder…** link.
 
 ### Review pane (left)
 
 Header: "Review" + subtitle ("Agent stream" / "Session complete") + unread pill (cap 99+).
 
-Banners (stacked, in priority order): integration missing (with inline Install), IDE-folder
-notice, dismissible error/live-warning, per-source detail for `stopped|error|ambiguous`, and the
-mode banner with these strings:
+Banners (stacked, in priority order): integration missing (with inline Install) or skill
+update available (with inline Update — the startup check compares the installed skill against
+the bundled template), IDE-folder notice, dismissible error/live-warning, per-source detail for
+`stopped|error|ambiguous`, and the mode banner with these strings:
 
 - `waitingTranscription`: "Call found. Waiting for transcription — start transcription in Tuple."
 - `waitingClaude`: "Waiting for the chronicle skill to attach from a repository."
@@ -75,18 +78,30 @@ glyphs and timestamps align with the first line of the row's text, never vertica
   "Decision approved" (gray, not green — green still reads as a call to action); rejected →
   red `xmark.square.fill` + "Decision rejected" (rejection keeps visual weight so scrolling
   back to check for a replacement decision is easy). Reviewed cards keep their box and body
-  but drop the buttons and status line. The card's reference renders as a subtle
-  dotted-underline link (no chip); selecting the card is the primary navigation.
+  but drop the buttons and status line. The card renders no inline reference link; the linked
+  handoff section is reached through the context menu's **Jump to Section** (kept secondary
+  deliberately — promote it only if usage shows it earns more prominence).
+
+While the agent has signaled `chronicle working` and nothing new has landed, the feed's last
+row is a **typing indicator**: a small bubble with three pulsing dots (iMessage-style; static
+under Reduce Motion; AX label "Claude is working"). Not selectable; clears when the next feed
+item arrives, the session finishes, or the signal expires (~2 min).
 
 **Selection model:** decision cards and plain messages are selectable; acks are not. The
-platform full-background highlight is suppressed (`listRowBackground(.clear)`); selection
-draws an accent **outline** on the row's rounded rect instead. Selecting a row marks it read,
-emits a `message_selected` event to the skill (so Claude knows which card the room is
-discussing), and — for decision cards — scrolls the handoff pane to the linked entry.
+platform highlight is fully suppressed — `listRowBackground(.clear)` plus disabling the backing
+NSTableView's `selectionHighlightStyle`, because the table otherwise flashes blue on click and
+leaves a gray row background; selection draws an accent **outline** on the row's rounded rect
+instead (click or keyboard). Selecting a row marks it read and emits a `message_selected` event
+to the skill (so Claude knows which card the room is discussing). Selection never scrolls or
+highlights the handoff pane — that is Jump to Section's job.
 
-Reference chips show last heading segment + snippet; clicking scrolls the handoff pane to the
-resolved range and flashes a highlight. Unresolvable → chip/link hidden immediately + stale
-report back to the skill (which unlinks it); a broken link is never rendered.
+Reference chips (plain messages) show last heading segment + snippet; clicking — like Jump to
+Section on a decision card — scrolls the handoff pane to the resolved range and flashes a
+highlight. Unresolvable → chip/menu item hidden immediately + stale report back to the skill
+(which unlinks it); a broken link is never rendered.
+
+Context menu: Copy Message, Mark as Read, Approve/Reject Decision (unreviewed decisions),
+Jump to Section + Copy Reference (rows with a live reference).
 
 Empty state: "You're all caught up" / "New review notes and decisions will appear here."
 

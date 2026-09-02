@@ -75,6 +75,13 @@ struct ReviewPane: View {
                     Button("Install") { model.installIntegration() }
                         .controlSize(.small)
                 }
+            } else if model.integrationNeedsUpdate {
+                Banner(icon: "puzzlepiece.extension", tint: .orange) {
+                    Text("This version of Chronicle ships a newer chronicle skill than the one installed.")
+                } accessory: {
+                    Button("Update") { model.installIntegration() }
+                        .controlSize(.small)
+                }
             }
             if !model.snapshot.ideRegistryFound {
                 Banner(icon: "folder.badge.questionmark", tint: .secondary) {
@@ -219,6 +226,12 @@ struct ReviewPane: View {
                         .selectionDisabled(message.kind == .ack)
                         .contextMenu { contextMenu(for: message) }
                 }
+                if model.agentIsWorking {
+                    TypingIndicatorRow()
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .selectionDisabled()
+                }
                 Color.clear
                     .frame(height: 1)
                     .id("feed-bottom")
@@ -228,6 +241,9 @@ struct ReviewPane: View {
                     .onDisappear { nearBottom = false }
             }
             .listStyle(.plain)
+            // listRowBackground(.clear) alone doesn't stop the backing
+            // NSTableView from flashing its own selection under the rows.
+            .background(FeedSelectionHighlightDisabler())
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentOffset.y + geometry.contentInsets.top > 1
             } action: { _, isScrolled in
@@ -241,6 +257,11 @@ struct ReviewPane: View {
             .overlay { emptyState }
             .onChange(of: model.snapshot.messages.count) {
                 if nearBottom {
+                    proxy.scrollTo("feed-bottom", anchor: .bottom)
+                }
+            }
+            .onChange(of: model.agentIsWorking) {
+                if model.agentIsWorking, nearBottom {
                     proxy.scrollTo("feed-bottom", anchor: .bottom)
                 }
             }
@@ -271,10 +292,8 @@ struct ReviewPane: View {
                 message: message,
                 status: model.effectiveDecisionStatus(message) ?? .unreviewed,
                 isSelected: model.feedSelection == message.id,
-                isStale: model.staleReferenceIDs.contains(message.id),
                 onApprove: { model.review(decisionId: message.id, as: .approved) },
-                onReject: { model.review(decisionId: message.id, as: .rejected) },
-                onOpenReference: { model.openReference(message) })
+                onReject: { model.review(decisionId: message.id, as: .rejected) })
         }
     }
 
@@ -295,6 +314,9 @@ struct ReviewPane: View {
         }
         if let reference = message.reference {
             Divider()
+            if !model.staleReferenceIDs.contains(message.id) {
+                Button("Jump to Section") { model.openReference(message) }
+            }
             Button("Copy Reference") {
                 let pasteboard = NSPasteboard.general
                 pasteboard.clearContents()
@@ -365,6 +387,48 @@ struct ReviewPane: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+}
+
+/// SwiftUI's List on macOS is backed by an NSTableView that draws its own
+/// selection (blue while clicking, gray at rest) behind the rows even with a
+/// clear `listRowBackground`. The feed's rows draw their own accent outline
+/// instead, so the platform highlight is switched off at the AppKit level.
+/// Finding no table view (a future SwiftUI-native List) changes nothing.
+private struct FeedSelectionHighlightDisabler: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { Locator() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class Locator: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // The List's platform views are siblings installed around the
+            // same time; defer one runloop turn so they exist.
+            DispatchQueue.main.async { [weak self] in
+                self?.disableHighlight()
+            }
+        }
+
+        private func disableHighlight() {
+            var ancestor = superview
+            var depth = 0
+            while let view = ancestor, depth < 8 {
+                if let table = Self.findTableView(in: view) {
+                    table.selectionHighlightStyle = .none
+                    return
+                }
+                ancestor = view.superview
+                depth += 1
+            }
+        }
+
+        private static func findTableView(in view: NSView) -> NSTableView? {
+            if let table = view as? NSTableView { return table }
+            for subview in view.subviews {
+                if let table = findTableView(in: subview) { return table }
+            }
+            return nil
+        }
     }
 }
 

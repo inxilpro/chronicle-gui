@@ -218,6 +218,25 @@ private func json(_ text: String) throws -> [String: Any] {
     }
 }
 
+@Suite struct WorkingCommandTests {
+    @Test func workingSignalsAndTheNextFeedItemClearsIt() throws {
+        let home = try CLITestHome()
+        let context = home.context()
+        _ = try run(["session", "attach", "--repo", home.repo], context: context)
+        #expect(try run(["working"], context: context) == "working")
+        #expect(try home.store.agentWorkingSince(sessionId: "tuple-call-1") != nil)
+        _ = try run(["say", "found it"], context: context)
+        #expect(try home.store.agentWorkingSince(sessionId: "tuple-call-1") == nil)
+    }
+
+    @Test func workingRequiresASession() throws {
+        let home = try CLITestHome()
+        #expect(
+            runError(["working"], context: home.context(callId: nil))?.message
+                == "no active Chronicle session; join a Tuple call and open Chronicle first")
+    }
+}
+
 @Suite struct PostingCommandTests {
     @Test func postsMessagesWithReferencesAndFiles() throws {
         let home = try CLITestHome()

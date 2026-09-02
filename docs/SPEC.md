@@ -280,6 +280,7 @@ chronicle session attach --repo <path>
 chronicle session current --json
 chronicle session finish
 chronicle show [--wait] --cursor <name> [--timeout <duration>] [--limit <count>]
+chronicle working
 chronicle say <text> [--ref-heading <A>B>] [--ref-snippet <text>] [--file <path[:line[-end]]>]...
 chronicle ack <text> [--file <path[:line[-end]]>]...
 chronicle decision <text> --id <id> [--ref-heading <A>B>] [--ref-snippet <text>] [--file <path[:line[-end]]>]...
@@ -304,6 +305,12 @@ chronicle read [<message-id>]
   collect (Tuple timeout ≤ ~2 s per pass), check for undelivered events; return as soon as any
   exist or the deadline passes (improvement over scribe: waits on local data, not only Tuple's
   long-poll). Prints `ShowResult` JSON; `hasMore: true` means call again immediately.
+- **`working`** — signals that the agent is about to do background work; binds to the
+  active/finalizing session. Stores `settings.agent_working = "<timestamp>|<session-id>"`; the
+  GUI renders an iMessage-style typing indicator at the bottom of the review feed. The
+  indicator clears when the next chat message posts (any kind — `appendMessage` deletes the
+  setting), when the session finishes, or ~120 s after the last unrefreshed signal (a crashed
+  agent must not glow forever). No stop command. Prints `working`.
 - **`say` / `ack` / `decision`** — bind to the active/finalizing session; print
   `posted <command> <message-id>`. Text is the first positional, non-empty after trim, must not
   start with `--`. `--ref-heading` splits on `>` (parts trimmed); requires `--ref-snippet` and
@@ -443,6 +450,11 @@ App action **Install Claude integration** (also surfaced on first run):
    atomically.
 4. `integrationInstalled` = shim exists AND skill file exists.
 
+At startup (and after each install) the app renders the bundled template with the shim path and
+compares it to the installed skill file; a mismatch surfaces an update prompt — a banner in the
+review pane and an **Update Claude Integration** button on the waiting screen — that reruns the
+install.
+
 The skill template lives in the repo at `Resources/skill/SKILL.md` (bundled into the app). Its
 content is ported from scribe's `planning-scribe` skill with the renames of §0: attach → follow
 the call in a `show --wait --cursor chronicle --timeout 30s --limit 200` loop → maintain the
@@ -481,8 +493,12 @@ until exported), plus auxiliary windows. Follow the `mac-assed-mac-app` skill th
   Choose…), Integration (install/reinstall, shim + skill paths, optional `/usr/local/bin`
   symlink), Updates (Sparkle: check automatically, check now, channel).
 - **Dock badge**: unread count of `message` + `decision` messages.
-- **Liveness**: GRDB ValueObservation for DB-driven UI updates; DispatchSource/FSEvents watch
-  on `notes.md`; background collector loop (~2 s Tuple wait) on a task, not a 500 ms poll.
+- **Liveness**: GRDB ValueObservation for in-process DB-driven UI updates, plus a
+  DispatchSource watch on the SQLite `-wal` file — ValueObservation cannot see writes from the
+  CLI process, so the WAL watch is what makes `say`/`decision`/`working`/`session finish` from
+  the skill appear in the UI immediately (without it the app can strand on a stale mode, e.g.
+  still offering Finish after the skill already finished). DispatchSource watch on `notes.md`;
+  background collector loop (~2 s Tuple wait) on a task, not a 500 ms poll.
   Copy for empty/waiting states matches scribe's strings (§UI strings in scribe report) unless
   improved deliberately.
 - **State restoration**: window frames, pane widths, selected session survive relaunch (but a

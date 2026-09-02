@@ -3,6 +3,18 @@ import SwiftUI
 import UniformTypeIdentifiers
 import ChronicleKit
 
+nonisolated enum BuildFlags {
+    /// Sparkle only runs in Release builds; an Xcode dev build never checks
+    /// the appcast (unsigned builds would fail EdDSA validation anyway).
+    static let sparkleEnabled: Bool = {
+        #if DEBUG
+            false
+        #else
+            true
+        #endif
+    }()
+}
+
 nonisolated enum SettingsKey {
     static let editor = "editor"
     static let editorTemplate = "editorCustomTemplate"

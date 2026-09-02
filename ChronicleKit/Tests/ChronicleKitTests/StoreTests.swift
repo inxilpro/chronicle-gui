@@ -99,6 +99,38 @@ import Testing
         }
     }
 
+    @Test func workingIndicatorSignalsClearsAndExpires() throws {
+        let home = try TestHome()
+        let session = try home.store.createOrResumeSession(callId: "call-1")
+        _ = try home.store.attachRepo(
+            sessionId: session.id, repo: try makeGitRepository(at: home.scratch("repo")))
+
+        try home.store.signalAgentWorking(sessionId: session.id)
+        #expect(try home.store.agentWorkingSince(sessionId: session.id) != nil)
+        #expect(try home.store.snapshot().agentWorkingSince != nil)
+        // Another session never inherits the signal.
+        #expect(try home.store.agentWorkingSince(sessionId: "other-call") == nil)
+
+        // A new feed item is the promised feedback; the indicator clears.
+        try home.store.postMessage(
+            session: try home.store.session(session.id),
+            id: "m1", kind: .message, text: "found it")
+        #expect(try home.store.agentWorkingSince(sessionId: session.id) == nil)
+
+        // An unrefreshed signal expires so a crashed agent cannot glow forever.
+        let stale = Date().addingTimeInterval(-(ChronicleStore.agentWorkingExpiry + 1))
+        try home.store.signalAgentWorking(sessionId: session.id, now: stale)
+        #expect(try home.store.agentWorkingSince(sessionId: session.id) == nil)
+
+        // Finishing dismisses it too.
+        try home.store.signalAgentWorking(sessionId: session.id)
+        try home.store.markCallEnded(session.id)
+        #expect(try home.store.snapshot().agentWorkingSince != nil)
+        try home.store.finishSession(session.id)
+        #expect(try home.store.agentWorkingSince(sessionId: session.id) == nil)
+        #expect(try home.store.snapshot().agentWorkingSince == nil)
+    }
+
     @Test func staleActiveSessionBecomesInterrupted() throws {
         let home = try TestHome()
         let session = try home.store.createOrResumeSession(callId: "stale-call")
