@@ -67,20 +67,26 @@ the bundled template), IDE-folder notice, dismissible error/live-warning, per-so
 IDE-session picker appears only when >1 candidate and status is `ambiguous`: rows of
 `projectName · started time · state`.
 
-Message feed: `List` (native scroll/keyboard behavior for free) of three row shapes. Info
-glyphs and timestamps align with the first line of the row's text, never vertically centered:
+Message feed: `List` (native scroll/keyboard behavior for free) of three row shapes sharing
+one skeleton: a fixed-width SF Symbol status-icon gutter on the left, the content column
+(a full-width bubble, except acks), and a timestamp gutter on the right — icon and timestamp
+hang from the first text baseline, never vertically centered. Semantic colors throughout:
+accent means "needs attention", tertiary gray means "settled".
 
-- **ack** — quiet single-line row, info glyph, always read, **not selectable**.
-- **message** — bubble: body (rendered inline markdown code/bold), optional reference chip,
-  "New" pill when unread, timestamp on the first line.
-- **decision** — card whose title and icon reflect review state: unreviewed ◆ accent glyph +
-  "Decision requested" + **Approve** / **Reject** footer; approved → gray `checkmark.square` +
-  "Decision approved" (gray, not green — green still reads as a call to action); rejected →
-  red `xmark.square.fill` + "Decision rejected" (rejection keeps visual weight so scrolling
-  back to check for a replacement decision is easy). Reviewed cards keep their box and body
-  but drop the buttons and status line. The card renders no inline reference link; the linked
-  handoff section is reached through the context menu's **Jump to Section** (kept secondary
-  deliberately — promote it only if usage shows it earns more prominence).
+- **ack** — quiet row, `info.circle` tertiary glyph, always read, **not selectable**. Keeps
+  the shared gutters but has no bubble; its text aligns with the bubble edges.
+- **message** — bubble: body (rendered inline markdown code/bold), optional reference chip.
+  Read state lives entirely in the gutter dot: `circle.fill` accent while unread, tertiary
+  gray once read — no "New" pill.
+- **decision** — bubble whose title and gutter icon reflect review state: unreviewed →
+  accent `questionmark.diamond.fill` + "Decision needs confirmation" + **Approve** /
+  **Reject** footer; approved → tertiary `checkmark.diamond.fill` + "Decided" (gray, not
+  green — green still reads as a call to action); rejected → tertiary `xmark.diamond.fill` +
+  "Rejected" with secondary body text (gray, not red — a settled rejection is history, not
+  an alert). Reviewed rows keep their bubble and body but drop the buttons. The bubble
+  renders no inline reference link; the linked handoff section is reached through the
+  context menu's **Jump to Section** (kept secondary deliberately — promote it only if
+  usage shows it earns more prominence).
 
 While the agent has signaled `chronicle working` and nothing new has landed, the feed's last
 row is a **typing indicator**: a small bubble with three pulsing dots (iMessage-style; static
@@ -138,7 +144,7 @@ Body: rendered Markdown (native SwiftUI text, selectable). Requirements:
 
 | Element | Control | Selection | Keyboard | Copy | Drag | Context menu | Saved state | AX |
 |---|---|---|---|---|---|---|---|---|
-| Review feed | `List` | single row (accent outline, no full-background highlight; acks unselectable; selecting marks read + emits `message_selected` + decisions jump the handoff pane) | ↑↓ move, Space toggles read, ⏎ approve / ⌫ reject focused decision | message text (plain) | — | Copy Message, Mark Read/Unread, Approve/Reject (decisions), Copy Reference | scroll pos (session-scoped) | list; decision rows announce state ("Decision requested, unreviewed" / "Decision approved/rejected") |
+| Review feed | `List` | single row (accent outline, no full-background highlight; acks unselectable; selecting marks read + emits `message_selected` + decisions jump the handoff pane) | ↑↓ move, Space toggles read, ⏎ approve / ⌫ reject focused decision | message text (plain) | — | Copy Message, Mark Read/Unread, Approve/Reject (decisions), Copy Reference | scroll pos (session-scoped) | list; decision rows announce state ("Decision needs confirmation, unread" / "Decided"/"Rejected") |
 | Decision card buttons | `Button` | — | ⏎/⌫ when row focused | — | — | mirrored in row menu + Session menu | review status (db) | buttons labeled "Approve decision"/"Reject decision" |
 | Reference chip | `Button` styled chip | — | activates on ⏎ | Copy Reference (heading › snippet) | — | Copy Reference | — | "Reference: <heading>" |
 | Source strip | custom HStack of dots | — | focusable, ⏎ opens popover | — | — | — | — | each: "<source>, <status>" |

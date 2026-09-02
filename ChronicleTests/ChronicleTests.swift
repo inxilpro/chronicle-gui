@@ -75,9 +75,9 @@ struct FeedFormatTests {
     }
 
     @Test func decisionTitleReflectsReviewState() {
-        #expect(FeedFormat.decisionTitle(.unreviewed) == "Decision requested")
-        #expect(FeedFormat.decisionTitle(.approved) == "Decision approved")
-        #expect(FeedFormat.decisionTitle(.rejected) == "Decision rejected")
+        #expect(FeedFormat.decisionTitle(.unreviewed) == "Decision needs confirmation")
+        #expect(FeedFormat.decisionTitle(.approved) == "Decided")
+        #expect(FeedFormat.decisionTitle(.rejected) == "Rejected")
     }
 
     @Test func referencePasteboardText() {

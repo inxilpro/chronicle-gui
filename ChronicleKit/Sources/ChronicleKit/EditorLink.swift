@@ -129,13 +129,13 @@ public enum FeedFormat {
         return count > 99 ? "99+" : String(count)
     }
 
-    /// Decision card titles reflect review state so a reviewed card never
-    /// keeps reading "Decision requested".
+    /// Decision row titles reflect review state so a reviewed row never
+    /// keeps asking for confirmation.
     public static func decisionTitle(_ status: DecisionStatus) -> String {
         switch status {
-        case .unreviewed: "Decision requested"
-        case .approved: "Decision approved"
-        case .rejected: "Decision rejected"
+        case .unreviewed: "Decision needs confirmation"
+        case .approved: "Decided"
+        case .rejected: "Rejected"
         }
     }
 

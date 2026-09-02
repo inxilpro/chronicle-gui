@@ -1,32 +1,68 @@
 import SwiftUI
 import ChronicleKit
 
-/// Quiet single-line row for `ack` messages; always read, never selectable.
-struct AckRow: View {
-    var message: ChatMessage
+/// Shared skeleton for every feed row: a fixed-width status-icon gutter, the
+/// content column, and a trailing timestamp gutter. Icon and timestamp hang
+/// from the first text baseline so every row kind lines up identically.
+struct FeedRow<Icon: View, Content: View>: View {
+    var time: String
+    @ViewBuilder var icon: () -> Icon
+    @ViewBuilder var content: () -> Content
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: "info.circle")
-                .foregroundStyle(.tertiary)
-                .imageScale(.small)
-            Text(inlineMarkdown(message.text))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            Spacer(minLength: 0)
-            Text(TimestampFormat.time(message.timestamp))
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            icon()
+                .frame(width: 16)
+                .accessibilityHidden(true)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(time)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .monospacedDigit()
         }
         .padding(.vertical, 2)
+    }
+}
+
+extension View {
+    /// The shared bubble chrome. Selection draws the accent outline here
+    /// because the list's platform highlight is suppressed.
+    fileprivate func feedBubble(isSelected: Bool) -> some View {
+        padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 1.5)
+            )
+    }
+}
+
+/// Quiet row for `ack` messages; always read, never selectable. Keeps the
+/// shared gutters but drops the bubble, so its text aligns with the bubble
+/// edges above and below it.
+struct AckRow: View {
+    var message: ChatMessage
+
+    var body: some View {
+        FeedRow(time: TimestampFormat.time(message.timestamp)) {
+            Image(systemName: "info.circle")
+                .foregroundStyle(.tertiary)
+        } content: {
+            Text(inlineMarkdown(message.text))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Note: \(message.text)")
     }
 }
 
-/// Bubble row for plain `message` messages.
+/// Bubble row for plain `message` messages. Read state lives entirely in the
+/// gutter dot — accent while unread, fading to gray once read.
 struct MessageRow: View {
     var message: ChatMessage
     var isSelected: Bool
@@ -34,39 +70,30 @@ struct MessageRow: View {
     var onOpenReference: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+        FeedRow(time: TimestampFormat.time(message.timestamp)) {
+            Image(systemName: "circle.fill")
+                .foregroundStyle(
+                    message.read ? AnyShapeStyle(.tertiary) : AnyShapeStyle(Color.accentColor))
+        } content: {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(inlineMarkdown(message.text))
-                Spacer(minLength: 8)
-                if !message.read {
-                    NewPill()
+                if let reference = message.reference, !isStale {
+                    ReferenceChip(reference: reference, action: onOpenReference)
                 }
-                Text(TimestampFormat.time(message.timestamp))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
             }
-            if let reference = message.reference, !isStale {
-                ReferenceChip(reference: reference, action: onOpenReference)
-            }
+            .feedBubble(isSelected: isSelected)
         }
-        .padding(10)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 1.5)
-        )
-        .padding(.vertical, 2)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
             message.read ? "Message: \(message.text)" : "Unread message: \(message.text)")
     }
 }
 
-/// Card row for `decision` messages. Unreviewed cards carry the Approve/Reject
-/// surface; reviewed cards keep their box but drop the buttons and status line,
-/// fading behind a state icon and title instead. The linked handoff section is
-/// reachable through the context menu's Jump to Section, not an inline link.
+/// Bubble row for `decision` messages. Unreviewed rows carry the Approve/Reject
+/// surface behind an accent diamond; reviewed rows drop the buttons and fade —
+/// including rejected (gray, not red): a settled rejection is history, not an
+/// alert. The linked handoff section is reachable through the context menu's
+/// Jump to Section, not an inline link.
 struct DecisionRow: View {
     var message: ChatMessage
     var status: DecisionStatus
@@ -75,88 +102,55 @@ struct DecisionRow: View {
     var onReject: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                statusIcon
-                    .accessibilityHidden(true)
+        FeedRow(time: TimestampFormat.time(message.timestamp)) {
+            statusIcon
+        } content: {
+            VStack(alignment: .leading, spacing: 8) {
                 Text(FeedFormat.decisionTitle(status))
                     .font(.headline)
-                Spacer(minLength: 8)
-                if !message.read && status == .unreviewed {
-                    NewPill()
-                }
-                Text(TimestampFormat.time(message.timestamp))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
-            }
-            Text(inlineMarkdown(message.text))
-            if status == .unreviewed {
-                HStack(spacing: 8) {
-                    Button("Approve", action: onApprove)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .accessibilityLabel("Approve decision")
-                    Button("Reject", action: onReject)
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .accessibilityLabel("Reject decision")
+                Text(inlineMarkdown(message.text))
+                if status == .unreviewed {
+                    HStack(spacing: 8) {
+                        Button("Approve", action: onApprove)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .accessibilityLabel("Approve decision")
+                        Button("Reject", action: onReject)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .accessibilityLabel("Reject decision")
+                    }
                 }
             }
+            .foregroundStyle(
+                status == .rejected ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+            .feedBubble(isSelected: isSelected)
         }
-        .padding(12)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(borderColor, lineWidth: isSelected ? 1.5 : 1)
-        )
-        .padding(.vertical, 2)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilitySummary)
     }
 
-    /// Unreviewed keeps the accent diamond that asks for action; approved fades
-    /// to a gray check (green still reads as a call to action); rejected gets a
-    /// red X because a rejection is worth spotting when scrolling back.
     @ViewBuilder
     private var statusIcon: some View {
         switch status {
         case .unreviewed:
-            Text("◆")
+            Image(systemName: "questionmark.diamond.fill")
                 .foregroundStyle(Color.accentColor)
         case .approved:
-            Image(systemName: "checkmark.square")
-                .foregroundStyle(.secondary)
+            Image(systemName: "checkmark.diamond.fill")
+                .foregroundStyle(.tertiary)
         case .rejected:
-            Image(systemName: "xmark.square.fill")
-                .foregroundStyle(.red)
+            Image(systemName: "xmark.diamond.fill")
+                .foregroundStyle(.tertiary)
         }
-    }
-
-    private var borderColor: Color {
-        if isSelected { return Color.accentColor }
-        return status == .unreviewed ? Color.accentColor.opacity(0.5) : .clear
     }
 
     private var accessibilitySummary: String {
-        switch status {
-        case .unreviewed where !message.read: "Decision requested, unreviewed: \(message.text)"
-        case .unreviewed: "Decision requested: \(message.text)"
-        case .approved: "Decision approved: \(message.text)"
-        case .rejected: "Decision rejected: \(message.text)"
+        let title = FeedFormat.decisionTitle(status)
+        if status == .unreviewed, !message.read {
+            return "\(title), unread: \(message.text)"
         }
-    }
-}
-
-struct NewPill: View {
-    var body: some View {
-        Text("New")
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(Color.accentColor, in: Capsule())
-            .foregroundStyle(.white)
-            .accessibilityLabel("Unread")
+        return "\(title): \(message.text)"
     }
 }
 
@@ -202,12 +196,15 @@ struct ReferenceChip: View {
 
 /// The iMessage-style three-dot bubble shown at the bottom of the feed while
 /// the agent has signaled `chronicle working` and nothing new has landed yet.
+/// Keeps the shared icon gutter so it lines up with the real rows.
 struct TypingIndicatorRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var animating = false
 
     var body: some View {
-        HStack {
+        HStack(spacing: 8) {
+            Color.clear
+                .frame(width: 16, height: 1)
             HStack(spacing: 5) {
                 ForEach(0..<3) { index in
                     Circle()
