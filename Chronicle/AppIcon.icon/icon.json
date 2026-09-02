@@ -22,8 +22,8 @@
           "blend-mode" : "multiply",
           "fill" : "none",
           "glass" : false,
-          "image-name" : "scribe.png",
-          "name" : "scribe",
+          "image-name" : "chronicle.png",
+          "name" : "chronicle",
           "opacity" : 0.8,
           "position" : {
             "scale" : 1.25,

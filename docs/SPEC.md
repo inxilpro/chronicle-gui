@@ -1,4 +1,4 @@
-# Chronicle for Mac — port specification
+# Chronicle for Mac — specification
 
 Chronicle is a native macOS companion app for live technical planning calls. It sits between
 three collaborators:
@@ -15,24 +15,6 @@ three collaborators:
 Chronicle owns the live session for the current Tuple call, gives Claude a visible review stream,
 and renders the internal Markdown handoff as Claude edits it. It writes nothing into a project
 until the user chooses **Save As…** for a finished handoff.
-
-This is a native Swift port of the earlier Tauri prototype ("scribe",
-`/Users/inxilpro/Development/tauri/scribe`). The product behavior below is the scribe contract
-with these renames and deliberate changes:
-
-| scribe | Chronicle |
-| --- | --- |
-| `scribe` CLI | `chronicle` CLI |
-| `scribe tick` | `chronicle show` |
-| `planning-scribe` skill at `~/.claude/skills/planning-scribe` | `chronicle` skill at `~/.claude/skills/chronicle` |
-| `~/.scribe/scribe.db`, `~/.scribe/sessions/` | `~/Library/Application Support/Chronicle/chronicle.db`, `…/Chronicle/sessions/` |
-| `~/.scribe/bin/scribe` shim | `~/.chronicle/bin/chronicle` shim |
-| `SCRIBE_HOME` override | `CHRONICLE_APP_HOME` override |
-| Tuple durable cursor `scribe-<call-id>` | `chronicle-<call-id>` |
-| `source: "scribe"` synthetic events | `source: "chronicle"` synthetic events |
-| PhpStorm hardcoded for file opens | Configurable editor (PhpStorm default) |
-| `tick --wait` only waits on Tuple | `show --wait` also waits on local undelivered events |
-| 500 ms full-snapshot polling GUI | FSEvents/GRDB observation where practical |
 
 Naming note: "Chronicle" now names the whole product family — the IDE plugin, this Mac app, and
 its CLI. In code, `ChronicleIDE`/`ide` prefixes refer to the plugin's published data; unprefixed
@@ -123,7 +105,7 @@ struct NormalizedEvent {
   var kind: String; var payload: JSONValue
 }
 
-struct ShowResult {                                 // `chronicle show` output; scribe's TickResult
+struct ShowResult {                                 // `chronicle show` output
   var sessionId: String; var sessionState: SessionState
   var notesPath: String; var repoPath: String?
   var sourceHealth: [SourceHealth]
@@ -147,8 +129,8 @@ struct AppSnapshot {                                // what the GUI renders
 ```
 
 **Event source naming:** normalized events use `source` values `tuple`, `chronicle` (synthetic
-review events from this app — scribe called these `scribe`), and `ide` (events imported from the
-IDE plugin — scribe called these `chronicle`). The `SourceHealth.source` values shown to skill
+review events from this app), and `ide` (events imported from the
+IDE plugin). The `SourceHealth.source` values shown to skill
 and UI are `tuple`, `claude`, `chronicle` where `chronicle` means the IDE plugin. The skill
 documents these names; keep them exact.
 
@@ -159,8 +141,7 @@ synthetic events (§6).
 
 ## 3. Database
 
-GRDB, WAL, `user_version`-style migrations (use GRDB's migrator). Single schema v1 equal to
-scribe's final (post-migration-3) schema:
+GRDB, WAL, `user_version`-style migrations (use GRDB's migrator). Single schema v1:
 
 ```sql
 CREATE TABLE sessions (
@@ -236,7 +217,7 @@ CREATE TABLE ide_candidates (
 Known `settings` keys: `ide_root` (explicit IDE-plugin folder), `tuple_discovery_error`,
 `selected_session`.
 
-### Store behaviors (mirror scribe exactly unless noted)
+### Store behaviors
 
 - **`createOrResumeSession(callId)`** — creates `sessions/<safe-id>/notes.md` (empty), demotes
   any *other* `active` session to `interrupted`, upserts the row (an `interrupted` row for this
@@ -244,14 +225,14 @@ Known `settings` keys: `ide_root` (explicit IDE-plugin folder), `tuple_discovery
 - **`markCallEnded`** → `finalizing` + `call_ended_at`. **`finishSession`** → `complete` only
   from `finalizing`; errors otherwise with the state-specific messages in §4.
 - **`interruptStaleSessions(olderThan: 12h)`** at app launch demotes stale `active` rows.
-  Improvement over scribe: also run it periodically from the GUI collector, not only at launch.
+  Also runs periodically from the GUI collector, not only at launch.
 - **Selected session** — prefer any `active`/`finalizing` (active first, then `updated_at`
   DESC), else the `settings.selected_session` row. At GUI launch, clear a *terminal* selection so
   relaunch shows the waiting screen.
 - **Mode derivation**: no selected session → `waitingCall`; active + tuple status `waiting` →
   `waitingTranscription`; active + repo nil → `waitingClaude`; active → `active`; otherwise the
   session state.
-- **`show(sessionId, consumer, limit)`** (scribe's `tick`) — one IMMEDIATE transaction:
+- **`show(sessionId, consumer, limit)`** — one IMMEDIATE transaction:
   upsert cursor row; select undelivered events (`LEFT JOIN consumer_deliveries … WHERE
   delivery IS NULL ORDER BY occurred_at, sequence LIMIT ?` — occurrence order, not insertion
   order); insert a delivery row per event (exactly-once, late-arriving events included);
@@ -303,8 +284,8 @@ chronicle read [<message-id>]
   `<digits>(ms|s|m)`, 1 ms…5 m, default `30s`; `--limit` default 200, 1…10 000. Without
   `--wait`, collect with 1 ms Tuple timeout and return immediately. With `--wait`: loop —
   collect (Tuple timeout ≤ ~2 s per pass), check for undelivered events; return as soon as any
-  exist or the deadline passes (improvement over scribe: waits on local data, not only Tuple's
-  long-poll). Prints `ShowResult` JSON; `hasMore: true` means call again immediately.
+  exist or the deadline passes (waits on local data, not only Tuple's long-poll). Prints
+  `ShowResult` JSON; `hasMore: true` means call again immediately.
 - **`working`** — signals that the agent is about to do background work; binds to the
   active/finalizing session. Stores `settings.agent_working = "<timestamp>|<session-id>"`; the
   GUI renders an iMessage-style typing indicator at the bottom of the review feed. The
@@ -353,7 +334,7 @@ CLI `show`/`session` command):
 Tuple binary discovery: `$TUPLE_BIN`, `/usr/local/bin/tuple`, `/opt/homebrew/bin/tuple`, then
 `tuple` on PATH.
 
-**Tuple record normalization** (port scribe's rules exactly):
+**Tuple record normalization**:
 
 - `"kind":"status"` lines: only `"status":"call_ended"` matters → synthetic event
   `stableId "tuple:call-ended"`, `kind "call_ended"`, and `markCallEnded` (→ `finalizing`).
@@ -386,8 +367,8 @@ Tuple binary discovery: `$TUPLE_BIN`, `/usr/local/bin/tuple`, `/opt/homebrew/bin
 - Read `sessions.json` per the wire contract; validate schemaVersion 1, unique non-empty ids,
   `state ∈ {active, completed, interrupted}`, absolute `logPath`/`projectRoot`/roots,
   timestamps exactly `YYYY-MM-DDTHH:MM:SS.mmmZ`, active ⇒ no `endedAt`, `pid != 0`. Ignore
-  `sessions.json.lock`. Tolerate unknown *registry* fields (deliberate loosening vs scribe: the
-  plugin is ours and will evolve; unknown keys in the registry must not fail-close).
+  `sessions.json.lock`. Tolerate unknown *registry* fields (the plugin is ours and will
+  evolve; unknown keys in the registry must not fail-close).
 - **Matching** after the skill attaches a repo: candidates whose any `repositories[].root`
   canonicalizes equal to the attached Git root; if any `active`, keep only active; if any
   time-overlaps the session window, keep only overlapping; sort `startedAt` DESC. Exactly one →
@@ -402,8 +383,8 @@ Tuple binary discovery: `$TUPLE_BIN`, `/usr/local/bin/tuple`, `/opt/homebrew/bin
   `redacted` present only as `true`; millisecond-UTC timestamps; no duplicate ids in a chunk;
   empty lines are an error. Event `data` validated per the wire-contract table (required keys
   present, path rules, `startLine ≤ endLine`); `audio_transcription` always rejected. Unknown
-  *event types* and unknown `data` keys → error (fail-closed on the log itself, matching
-  scribe; the log is the contract). Registry `completed` but log not ending in `session_ended`
+  *event types* and unknown `data` keys → error (fail-closed on the log itself; the log is
+  the contract). Registry `completed` but log not ending in `session_ended`
   → error. Any failure sets health `error` with the message and preserves the previous cursor.
 - **Normalized form**: `stableId` = envelope id, `source` "ide", `streamId` = IDE session id,
   `sourceSequence` = sequence, `kind` = type, payload
@@ -456,12 +437,10 @@ review pane and an **Update Claude Integration** button on the waiting screen �
 install.
 
 The skill template lives in the repo at `Resources/skill/SKILL.md` (bundled into the app). Its
-content is ported from scribe's `planning-scribe` skill with the renames of §0: attach → follow
-the call in a `show --wait --cursor chronicle --timeout 30s --limit 200` loop → maintain the
-handoff (decision markers `<!-- chronicle-decision: id -->`, `**Status:**` lines, file refs
-`` `path:line` @sha `` ) → speak sparingly through `say`/`ack`/`decision` → on `call_ended`
-drain, restructure, `session finish`. The handoff document template and the chat/body/nowhere
-discipline table carry over verbatim in spirit.
+flow: attach → follow the call in a `show --wait --cursor chronicle --timeout 30s --limit 200`
+loop → maintain the handoff (decision markers `<!-- chronicle-decision: id -->`, `**Status:**`
+lines, file refs `` `path:line` @sha `` ) → speak sparingly through `say`/`ack`/`decision` →
+on `call_ended` drain, restructure, `session finish`.
 
 ## 7. The app (Mac-assed requirements)
 
@@ -499,8 +478,8 @@ until exported), plus auxiliary windows. Follow the `mac-assed-mac-app` skill th
   the skill appear in the UI immediately (without it the app can strand on a stale mode, e.g.
   still offering Finish after the skill already finished). DispatchSource watch on `notes.md`;
   background collector loop (~2 s Tuple wait) on a task, not a 500 ms poll.
-  Copy for empty/waiting states matches scribe's strings (§UI strings in scribe report) unless
-  improved deliberately.
+  Copy for empty/waiting states follows [`UI-DESIGN.md`](UI-DESIGN.md) unless improved
+  deliberately.
 - **State restoration**: window frames, pane widths, selected session survive relaunch (but a
   terminal session clears to the waiting screen, per §3).
 - Keyboard, VoiceOver, light/dark, and copy/drag affordances per the skill's checklist: chat

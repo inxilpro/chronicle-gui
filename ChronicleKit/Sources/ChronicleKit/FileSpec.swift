@@ -61,7 +61,7 @@ public struct FileSpec: Sendable, Equatable, Hashable {
     }
 
     /// Backticked tokens in message text that contain a path separator and no
-    /// whitespace are treated as file references, mirroring scribe.
+    /// whitespace are treated as file references.
     public static func inferred(from text: String) -> [FileSpec] {
         var result: [FileSpec] = []
         var remaining = Substring(text)

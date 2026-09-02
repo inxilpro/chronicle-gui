@@ -8,7 +8,7 @@ import Testing
         #expect(candidates.count == 1)
         #expect(candidates[0].state == .completed)
         #expect(candidates[0].repositories[0].branch == "main")
-        #expect(candidates[0].projectName == "scribe")
+        #expect(candidates[0].projectName == "demo")
     }
 
     @Test func rejectsUnsupportedSchemaVersion() throws {
@@ -149,7 +149,7 @@ import Testing
             (
                 Fixtures.mutateLogLine(1) {
                     var data = $0["data"] as! [String: Any]
-                    data["path"] = "/Users/chris/Code/scribe/src/App.kt"
+                    data["path"] = "/Users/chris/Code/demo/src/App.kt"
                     $0["data"] = data
                 }, "must be projectRoot-relative"
             ),
@@ -338,7 +338,7 @@ import Testing
             .write(to: ideRoot.appendingPathComponent("sessions.json"))
 
         // The earlier auto-selection survives a re-discover even though a
-        // second candidate appeared (mirrors scribe).
+        // second candidate appeared.
         try IDEIngestion.discover(store: home.store, session: attached)
         #expect(try home.store.sourceHealth(sessionId: session.id)[2].status == "live")
         #expect(try home.store.ideCandidates(sessionId: session.id).count == 2)

@@ -55,8 +55,7 @@ enum Fixtures {
         try IDEIngestion.parseRegistry(registry)[0]
     }
 
-    /// Rewrites one fixture log line through JSONSerialization, mirroring
-    /// scribe's mutate_log_line test helper.
+    /// Rewrites one fixture log line through JSONSerialization.
     static func mutateLogLine(_ index: Int, _ update: (inout [String: Any]) -> Void) -> Data {
         var lines = logLines
         var value =
@@ -102,7 +101,7 @@ func makeGitRepository(at url: URL) throws -> String {
     return GitClient.canonicalize(url.path)
 }
 
-/// A shell-script Tuple CLI mock, like scribe's tests use.
+/// A shell-script Tuple CLI mock.
 func makeTupleMock(in directory: URL, body: String) throws -> TupleClient {
     let executable = directory.appendingPathComponent("tuple-mock-\(UUID().uuidString)")
     try "#!/bin/sh\nset -eu\n\(body)\n".write(to: executable, atomically: true, encoding: .utf8)

@@ -26,7 +26,7 @@ Companion to [SPEC.md](SPEC.md) §7. This is the design contract for the SwiftUI
 | **Chronicle** (main) | `Window` (single) | Split: Review stream (left, 320–560 pt, persisted) + Planning handoff (right). Waiting states replace content with centered guidance. Min 800×600, default 1200×800. Full restoration. |
 | **History** | `Window`, ⌥⌘H | Recent sessions list. Selecting a terminal session loads it in the main window. Delete with confirmation. Not a popover — it's a real window a user may keep open. |
 | **Settings** | `Settings` scene, ⌘, | Tabs: General, Integration, Updates. |
-| **About** | standard | Credits string mentions scribe lineage. |
+| **About** | standard | Standard about panel with a one-line credits tagline. |
 
 Sheets/dialogs: session delete confirmation (`.confirmationDialog`), Save As (NSSavePanel via
 `fileExporter` or AppKit panel — must default name `planning-handoff.md`, allow .md only),

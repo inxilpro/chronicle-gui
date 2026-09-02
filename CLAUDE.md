@@ -112,9 +112,9 @@ presentation in the app.
 
 ## Docs and design contract
 
-- `docs/SPEC.md` — the authoritative product/architecture spec; it is the porting contract from
-  the earlier Tauri prototype ("scribe") and specifies exact behaviors, error strings, and schema.
-  Consult it before changing store, collector, CLI, or ingestion behavior.
+- `docs/SPEC.md` — the authoritative product/architecture spec; it specifies exact behaviors,
+  error strings, and schema. Consult it before changing store, collector, CLI, or ingestion
+  behavior.
 - `docs/UI-DESIGN.md` — the SwiftUI design contract: window anatomy, exact banner/waiting-state
   copy, command and menu plan, QA checklist.
 - `docs/ide-wire-contract.md` — the IDE plugin's registry and log format.

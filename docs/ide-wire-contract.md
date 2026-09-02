@@ -49,10 +49,10 @@ same file; each rewrites only its own entries.
       "id": "8aadfd6e-1c4a-4a3d-9f2b-6f1b2c3d4e5f",
       "state": "active",
       "logPath": "/Users/chris/.chronicle/sessions/8aadfd6e-1c4a-4a3d-9f2b-6f1b2c3d4e5f.jsonl",
-      "projectName": "scribe",
-      "projectRoot": "/Users/chris/Code/scribe",
+      "projectName": "demo",
+      "projectRoot": "/Users/chris/Code/demo",
       "repositories": [
-        { "root": "/Users/chris/Code/scribe", "branch": "main" }
+        { "root": "/Users/chris/Code/demo", "branch": "main" }
       ],
       "startedAt": "2026-09-01T11:45:00.000Z",
       "lastEventAt": "2026-09-01T11:59:58.230Z",
@@ -132,9 +132,9 @@ for a timeline and by `sequence` for append order — never assume they agree.
 
 ```json
 {"type": "session_started", "data": {
-  "projectName": "scribe",
-  "projectRoot": "/Users/chris/Code/scribe",
-  "repositories": [{"root": "/Users/chris/Code/scribe", "branch": "main"}],
+  "projectName": "demo",
+  "projectRoot": "/Users/chris/Code/demo",
+  "repositories": [{"root": "/Users/chris/Code/demo", "branch": "main"}],
   "ide": {"product": "PhpStorm", "version": "2026.2"},
   "pid": 40123
 }}

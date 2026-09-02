@@ -198,8 +198,8 @@ public enum IDEIngestion {
 
     // MARK: - Registry parsing
 
-    /// Unknown registry fields are tolerated (deliberate loosening versus
-    /// scribe); everything present is still validated strictly.
+    /// Unknown registry fields are tolerated so the plugin can evolve;
+    /// everything present is still validated strictly.
     static func parseRegistry(_ raw: Data) throws -> [IDESessionCandidate] {
         let document: JSONValue
         do {
@@ -637,7 +637,7 @@ public enum IDEIngestion {
                 try validateEventPath(directory, candidate: candidate)
             }
         case "audio_transcription":
-            throw ChronicleError("audio_transcription is never valid in Chronicle Scribe mode")
+            throw ChronicleError("audio_transcription is never valid in a Chronicle session log")
         default:
             throw ChronicleError("unknown Chronicle event type \(kind)")
         }
@@ -743,7 +743,7 @@ public enum IDEIngestion {
 }
 
 extension SourceName {
-    /// Storage source for events imported from the IDE plugin (scribe stored
-    /// these as "chronicle"; the health row keeps that name for the plugin).
+    /// Storage source for events imported from the IDE plugin (the health row
+    /// uses "chronicle" for the plugin instead).
     public static let ide = "ide"
 }

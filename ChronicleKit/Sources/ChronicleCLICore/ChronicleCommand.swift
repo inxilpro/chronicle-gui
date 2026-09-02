@@ -181,8 +181,8 @@ struct ShowCommand: ParsableCommand, ChronicleExecutable {
         if wait {
             // Collection is process-safe: GUI and CLI readers serialize on the
             // same per-call lock and share Tuple's durable chronicle-<call-id>
-            // cursor. Unlike scribe, waiting also watches local undelivered
-            // events, not only Tuple's long poll.
+            // cursor. Waiting also watches local undelivered events, not only
+            // Tuple's long poll.
             let deadline = context.now().addingTimeInterval(Double(timeoutMilliseconds) / 1000)
             while true {
                 // Events another process already collected deliver instantly.

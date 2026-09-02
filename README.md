@@ -1,5 +1,8 @@
 # Chronicle
 
+**[⬇ Download the latest release](https://github.com/inxilpro/chronicle-gui/releases/latest)**
+(macOS 26 or later; updates ship in-app via Sparkle)
+
 Chronicle is a native Mac companion for live technical planning calls. It sits
 between three collaborators:
 
@@ -55,6 +58,7 @@ chronicle session current --json           current session info; never creates a
 chronicle session finish                   complete a finalizing session (after call_ended)
 chronicle show [--wait] --cursor <name> [--timeout <duration>] [--limit <count>]
                                            collect sources and deliver the next durable event batch
+chronicle working                          show the room a typing indicator while doing background work
 chronicle say <text> [--ref-heading <A>B>] [--ref-snippet <text>] [--file <path[:line[-end]]>]...
 chronicle ack <text> [--file ...]          quiet acknowledgement (no reference allowed)
 chronicle decision <text> --id <id> [...]  post a decision card for room review
@@ -111,5 +115,6 @@ build; releases are cut by tag (see below).
 ## Documentation
 
 - [docs/SPEC.md](docs/SPEC.md) — the full product and architecture spec
+- [docs/UI-DESIGN.md](docs/UI-DESIGN.md) — the SwiftUI design contract
 - [docs/ide-wire-contract.md](docs/ide-wire-contract.md) — the IDE plugin's wire contract
 - [docs/RELEASING.md](docs/RELEASING.md) — signing, notarization, Sparkle, and release steps
