@@ -48,7 +48,6 @@ the GUI to be running.
 ~/Library/Application Support/Chronicle/     ("app home"; CHRONICLE_APP_HOME overrides, for tests/dev)
   chronicle.db
   locks/
-  spool/                                     raw Tuple batches held between cursor advance and DB commit
   sessions/<safe-session-id>/notes.md        the internal handoff; Claude edits it, the app renders it
 ~/.chronicle/bin/chronicle                   stable symlink to the embedded CLI (skill uses the absolute path)
 ~/.claude/skills/chronicle/SKILL.md          installed skill (template resource, {{CHRONICLE_BIN}} substituted)
@@ -271,7 +270,7 @@ chronicle read [<message-id>]
 ```
 
 - **`session attach --repo <path>`** — resolve current session (creating/resuming from
-  `tuple call current` if needed); `git -C <path> rev-parse --show-toplevel` + canonicalize;
+  `tuple call show` if needed); `git -C <path> rev-parse --show-toplevel` + canonicalize;
   store `repo_path`; set `claude` source `connected` ("chronicle skill attached"); run IDE-plugin
   discovery. Prints `SessionInfo` JSON. Errors: `"<path> is not inside a Git repository"`, etc.
 - **`session current --json`** — same shape; never creates a session; error
@@ -312,8 +311,9 @@ chronicle read [<message-id>]
 `collectOnce(store, tupleTimeout)` — the shared collection pass (GUI collector loop, and every
 CLI `show`/`session` command):
 
-1. `tuple call current --format json` (accept `id`/`call_id`/`callId`). Output containing
-   "not in a call" → no call, not an error. Session creation is explicit: the CLI passes
+1. `tuple call show --format json` (accept `id`/`call_id`/`callId`). Output containing
+   "not in a call" or "no active call", or a call whose `state` is `ended` → no call, not an
+   error. Session creation is explicit: the CLI passes
    `startSessions: true` (running the skill is an explicit act) and creates/resumes when the
    call differs from the stored session; the GUI collector passes `startSessions: false` and
    instead maintains `settings.tuple_available_call` (non-nil only while no active/finalizing
@@ -327,14 +327,14 @@ CLI `show`/`session` command):
    reappearing clears the timer. The user can also force this via **Session ▸ End Session…**
    (`reason: user_request`). Lookup errors with no session → persist
    `tuple_discovery_error` for the waiting screen.
-2. Tuple transcription, under an exclusive lock on `locks/tuple-<hash>.lock`:
-   `tuple --format json transcription show <call-id> --wait --timeout <t> --with-events --cursor chronicle-<call-id>`.
-   Tuple owns that durable cursor (backlog catch-up and restart-without-gaps are Tuple's job).
-   Because the cursor advances on read, each raw batch is spooled to
-   `spool/tuple-<safe-id>-<timestamp>-<uuid>.ndjson` before the database commit and removed
-   after it; the next pass (still under the lock) drains any leftover spool files first, so a
-   crash or busy-timeout between read and commit loses nothing. Stable IDs make the replay
-   idempotent; spool files from other sessions expire after 24 h.
+2. Tuple Capture, under an exclusive lock on `locks/tuple-<hash>.lock`:
+   `tuple --format json capture next <call-id> --timeout <t> --exclude content [--cursor <id>]`.
+   Chronicle owns the cursor: the highest positive top-level record `id` delivered, stored as
+   `{"after": <id>}` in the Tuple row's `source_state.cursor_json` and written only after the
+   batch's events and status are committed, so a crash or busy-timeout in between re-reads the
+   batch (stable IDs make the replay idempotent). The first pass omits `--cursor` and catches
+   up from the start. If Tuple answers "after record is unavailable", the cursor resets to `{}`
+   and the next pass catches up again.
 3. IDE-plugin discovery + collection (registry match, JSONL tail, import).
 
 Tuple binary discovery: `$TUPLE_BIN`, `/usr/local/bin/tuple`, `/opt/homebrew/bin/tuple`, then

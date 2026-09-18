@@ -543,6 +543,22 @@ public final class ChronicleStore: Sendable {
         }
     }
 
+    /// Replaces only the cursor, leaving the source's status and detail as they are.
+    public func setSourceCursor(sessionId: String, source: String, cursorJson: String) throws {
+        let timestamp = ChronicleTimestamp.now()
+        try write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO source_state (session_id, source, status, detail, cursor_json, updated_at)
+                    VALUES (?, ?, 'waiting', NULL, ?, ?)
+                    ON CONFLICT(session_id, source) DO UPDATE SET
+                        cursor_json = excluded.cursor_json,
+                        updated_at = excluded.updated_at
+                    """,
+                arguments: [sessionId, source, cursorJson, timestamp])
+        }
+    }
+
     public func sourceState(sessionId: String, source: String) throws -> StoredSourceState? {
         try read { db in
             guard

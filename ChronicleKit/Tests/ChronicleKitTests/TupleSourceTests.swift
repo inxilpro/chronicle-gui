@@ -32,6 +32,25 @@ import Testing
         #expect(ended.events[0].kind == "call_ended")
         #expect(ended.events[0].stableId == "tuple:call-ended")
         #expect(ended.status?.status == "ended")
+
+        let typed = TupleRecordParser.parse(Data("{\"kind\":\"status\",\"type\":\"call_ended\"}\n".utf8))
+        #expect(typed.callEnded)
+    }
+
+    @Test func cursorIsTheHighestPositiveTopLevelRecordId() {
+        // Speech is ordered by its start, so the highest ID can precede the
+        // last line; framing and nested speech-burst IDs never count.
+        let batch = TupleRecordParser.parse(
+            Data(
+                """
+                {"id":120,"type":"transcription_finished","time":"2026-09-01T12:00:09Z","data":{"id":7,"start":"2026-09-01T12:00:01Z","text":"Later ID"}}
+                {"id":118,"type":"transcription_finished","time":"2026-09-01T12:00:08Z","data":{"id":900,"start":"2026-09-01T12:00:02Z","text":"Earlier ID"}}
+                {"id":0,"type":"agent_prompt","time":"2026-09-01T12:00:03Z","data":{}}
+                {"kind":"status","status":"caught_up"}
+
+                """.utf8))
+        #expect(batch.cursor == 120)
+        #expect(TupleRecordParser.parse(Data("{\"kind\":\"status\",\"status\":\"caught_up\"}\n".utf8)).cursor == nil)
     }
 
     @Test func emptySpeechIsDroppedAndBriefGapsDoNotChangeStatus() {
@@ -109,11 +128,11 @@ import Testing
         try Collector.collectOnce(store: home.store, provider: tuple, timeout: "1ms")
         let args = try String(contentsOf: recordedArgs, encoding: .utf8)
         for expected in [
-            "transcription show call-mock", "--wait", "--with-events",
-            "--cursor chronicle-call-mock", "--format json",
+            "capture next call-mock", "--timeout 1ms", "--exclude content", "--format json",
         ] {
             #expect(args.contains(expected), "missing Tuple CLI option: \(expected)")
         }
+        #expect(!args.contains("--cursor"), "the first pass catches up from the start")
         let session = try #require(try home.store.currentSession())
         #expect(session.id == "call-mock")
         #expect(session.state == .finalizing)
@@ -151,11 +170,11 @@ import Testing
         let home = try TestHome()
         let session = try home.store.createOrResumeSession(callId: "call-connecting")
         // Tuple's exact diagnostic while a call is still connecting: the call
-        // exists in `call current` but not yet in the transcription store.
+        // exists in `call show` but not yet in the capture store.
         let tuple = try makeTupleMock(
             in: home.root,
             body: """
-                printf '%s\\n' '{"error":"no stored call matching \\"call-connecting\\"; run \\"tuple transcription list\\" to find stored call ids or \\"tuple call current\\" for the active call id"}'
+                printf '%s\\n' '{"error":"no stored call matching \\"call-connecting\\"; run \\"tuple capture list\\" to find retained call ids"}'
                 exit 1
                 """)
         try tuple.collect(store: home.store, session: session, timeout: "1ms")
@@ -173,6 +192,15 @@ import Testing
         let noCall = try makeTupleMock(
             in: home.root, body: "echo 'not in a call' >&2\nexit 1")
         #expect(try noCall.currentCall() == nil)
+
+        let noActiveCall = try makeTupleMock(
+            in: home.root,
+            body: "printf '%s\\n' '{\"error\":\"no active call; pass a call-id to read a stored capture\"}'\nexit 1")
+        #expect(try noActiveCall.currentCall() == nil)
+
+        let endedCall = try makeTupleMock(
+            in: home.root, body: "printf '%s\\n' '{\"id\":\"call-old\",\"state\":\"ended\"}'")
+        #expect(try endedCall.currentCall() == nil)
 
         let noId = try makeTupleMock(in: home.root, body: "printf '%s\\n' '{\"transcribing\":true}'")
         #expect(throws: ChronicleError("Tuple current-call JSON did not contain an ID")) {
@@ -195,7 +223,7 @@ import Testing
         let tuple = try makeTupleMock(in: home.root, body: "exit 7")
         let error = try #require(captureError { _ = try tuple.currentCall() })
         #expect(error.message.contains("returned no diagnostic output"))
-        #expect(error.message.contains("tuple call current --format json"))
+        #expect(error.message.contains("tuple call show --format json"))
         #expect(error.message.contains("exit status: 7"))
     }
 
@@ -296,55 +324,62 @@ import Testing
         #expect(try home.store.sourceState(sessionId: session.id, source: "tuple")?.status == "live")
     }
 
-    @Test func spooledBatchSurvivesACrashedPassAndDrainsOnTheNext() throws {
+    @Test func cursorResumesAfterTheHighestCommittedRecord() throws {
         let home = try TestHome()
-        let session = try home.store.createOrResumeSession(callId: "call-spool")
-        // A batch a crashed pass spooled but never committed: Tuple's cursor
-        // has moved past it, so the file is the only copy.
-        let spoolDir = home.store.paths.spoolDirectory
-        try FileManager.default.createDirectory(at: spoolDir, withIntermediateDirectories: true)
-        let orphan = spoolDir.appendingPathComponent("tuple-call-spool-000000000000001-x.ndjson")
-        try Data(
-            "{\"type\":\"transcription_finished\",\"time\":\"2026-09-01T12:00:09.000Z\",\"data\":{\"start\":\"2026-09-01T12:00:01.000Z\",\"user_id\":\"u1\",\"text\":\"Recovered\"}}\n"
-                .utf8
-        ).write(to: orphan)
-
+        let session = try home.store.createOrResumeSession(callId: "call-cursor")
+        let recordedArgs = home.scratch("tuple-args")
         let tuple = try makeTupleMock(
             in: home.root,
             body: """
-                if [ "$1" = "call" ]; then
-                  printf '%s\\n' '{"id":"call-spool"}'
-                  exit 0
-                fi
-                exit 0
+                printf '%s\\n' "$*" >> '\(recordedArgs.path)'
+                case "$*" in
+                  *--cursor*) exit 0 ;;
+                esac
+                printf '%s\\n' \\
+                  '{"id":41,"type":"transcription_finished","time":"2026-09-01T12:00:09.000Z","data":{"id":2,"start":"2026-09-01T12:00:01.000Z","user_id":"u1","text":"Hello"}}' \\
+                  '{"id":40,"type":"recording_started","time":"2026-09-01T12:00:00.000Z","data":{}}'
                 """)
-        try Collector.collectOnce(store: home.store, provider: tuple, timeout: "1ms")
-        let result = try home.store.show(sessionId: session.id, consumer: "spool-test", limit: 10)
-        #expect(result.events.map(\.kind) == ["speech"])
-        #expect(result.events[0].payload["text"]?.stringValue == "Recovered")
-        #expect(!FileManager.default.fileExists(atPath: orphan.path))
+        try tuple.collect(store: home.store, session: session, timeout: "1ms")
+        try tuple.collect(store: home.store, session: session, timeout: "1ms")
+        let calls = try String(contentsOf: recordedArgs, encoding: .utf8)
+            .split(separator: "\n").map(String.init)
+        #expect(calls.count == 2)
+        #expect(!calls[0].contains("--cursor"))
+        #expect(calls[1].contains("--cursor 41"))
+        // Status set by the batch survives the cursor write.
+        #expect(try home.store.sourceState(sessionId: session.id, source: "tuple")?.status == "live")
     }
 
-    @Test func successfulPassLeavesNoSpoolFileBehind() throws {
+    @Test func unavailableCursorRestartsCatchUpWithoutDuplicates() throws {
         let home = try TestHome()
-        _ = try home.store.createOrResumeSession(callId: "call-clean")
+        let session = try home.store.createOrResumeSession(callId: "call-reset")
+        try home.store.insertSourceEvents(
+            sessionId: session.id,
+            events: TupleRecordParser.parse(
+                Data(
+                    """
+                    {"id":7,"type":"transcription_finished","time":"2026-09-01T12:00:09.000Z","data":{"start":"2026-09-01T12:00:01.000Z","user_id":"u1","text":"Hello"}}
+
+                    """.utf8)
+            ).events)
+        try home.store.setSourceCursor(
+            sessionId: session.id, source: "tuple", cursorJson: TupleCursor(after: 99).json)
         let tuple = try makeTupleMock(
             in: home.root,
             body: """
-                if [ "$1" = "call" ]; then
-                  printf '%s\\n' '{"id":"call-clean"}'
-                  exit 0
-                fi
-                printf '%s\\n' '{"type":"transcription_finished","time":"2026-09-01T12:00:09.000Z","data":{"start":"2026-09-01T12:00:01.000Z","user_id":"u1","text":"Hello"}}'
+                case "$*" in
+                  *--cursor*)
+                    printf '%s\\n' '{"error":"after record is unavailable","error_code":404}'
+                    exit 1 ;;
+                esac
+                printf '%s\\n' '{"id":7,"type":"transcription_finished","time":"2026-09-01T12:00:09.000Z","data":{"start":"2026-09-01T12:00:01.000Z","user_id":"u1","text":"Hello"}}'
                 """)
-        try Collector.collectOnce(store: home.store, provider: tuple, timeout: "1ms")
-        let session = try #require(try home.store.currentSession())
-        let result = try home.store.show(sessionId: session.id, consumer: "clean-test", limit: 10)
+        try tuple.collect(store: home.store, session: session, timeout: "1ms")
+        #expect(try home.store.sourceState(sessionId: session.id, source: "tuple")?.cursorJson == TupleCursor().json)
+        try tuple.collect(store: home.store, session: session, timeout: "1ms")
+        #expect(try home.store.sourceState(sessionId: session.id, source: "tuple")?.cursorJson == TupleCursor(after: 7).json)
+        let result = try home.store.show(sessionId: session.id, consumer: "reset-test", limit: 10)
         #expect(result.events.map(\.kind) == ["speech"])
-        let spooled =
-            (try? FileManager.default.contentsOfDirectory(
-                at: home.store.paths.spoolDirectory, includingPropertiesForKeys: nil)) ?? []
-        #expect(spooled.isEmpty)
     }
 
     @Test func missingCallInfersTheEndAfterTheGracePeriod() throws {

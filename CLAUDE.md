@@ -55,7 +55,7 @@ under `<app home>/locks/`. CLI writes must keep working with the GUI closed; nev
 socket, XPC service, or "GUI is authoritative" assumption.
 
 Data flow: `Collector.collectOnce` is the single collection pass, run both by the GUI's
-background loop and by every CLI `show`/`session` command. It polls `tuple call current`,
+background loop and by every CLI `show`/`session` command. It polls `tuple call show`,
 collects Tuple transcription under a lock, then discovers and tails the IDE plugin's JSONL log.
 Call detection + collection sit behind the `CallProvider` protocol (`CallProvider.swift`);
 `TupleClient` is the only implementation today, and a future call source (Zoom, local capture)

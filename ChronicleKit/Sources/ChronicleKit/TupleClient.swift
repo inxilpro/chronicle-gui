@@ -36,17 +36,17 @@ public final class TupleClient: CallProvider {
     }
 
     public func currentCall() throws -> String? {
-        let output = try run(arguments: ["call", "current", "--format", "json"])
+        let output = try run(arguments: ["call", "show", "--format", "json"])
         if !output.succeeded {
-            if let diagnostic = output.diagnostic,
-                diagnostic.lowercased().contains("not in a call")
+            if let diagnostic = output.diagnostic?.lowercased(),
+                ["not in a call", "no active call"].contains(where: diagnostic.contains)
             {
                 return nil
             }
             throw ChronicleError(
                 Self.commandError(
                     operation: "checking the current call",
-                    command: "tuple call current --format json",
+                    command: "tuple call show --format json",
                     output: output))
         }
         let value: JSONValue
@@ -54,6 +54,10 @@ public final class TupleClient: CallProvider {
             value = try JSONDecoder().decode(JSONValue.self, from: output.stdout)
         } catch {
             throw ChronicleError("Tuple returned invalid current-call JSON: \(error.localizedDescription)")
+        }
+        // `call show` shares its shape with retained calls, so an ended call is not a live one.
+        if value["state"]?.stringValue == "ended" {
+            return nil
         }
         let id = (value["id"] ?? value["call_id"] ?? value["callId"])?.stringValue
         guard let id, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -80,17 +84,27 @@ public final class TupleClient: CallProvider {
         }
         defer { flock(descriptor, LOCK_UN) }
 
-        // A batch a previous pass wrote but never committed (crash, database
-        // timeout) replays first; stable IDs make the re-insert idempotent.
-        try Self.drainSpool(store: store, session: session)
-
-        let cursor = "chronicle-\(session.id)"
-        let output = try run(arguments: [
-            "--format", "json", "transcription", "show", session.id,
-            "--wait", "--timeout", timeout, "--with-events", "--cursor", cursor,
-        ])
+        let cursor = try store.sourceState(sessionId: session.id, source: SourceName.tuple)
+            .flatMap(\.cursorJson)
+            .flatMap { try? JSONDecoder().decode(TupleCursor.self, from: Data($0.utf8)) }
+        var arguments = [
+            "--format", "json", "capture", "next", session.id,
+            "--timeout", timeout, "--exclude", "content",
+        ]
+        if let after = cursor?.after {
+            arguments += ["--cursor", String(after)]
+        }
+        let output = try run(arguments: arguments)
         if !output.succeeded {
             let diagnostic = output.diagnostic ?? ""
+            if cursor?.after != nil, diagnostic.lowercased().contains("after record is unavailable") {
+                // Tuple no longer has the record the cursor points at (its capture
+                // store was pruned or reset). Catching up from the start is safe
+                // because stable IDs dedupe everything already collected.
+                try store.setSourceCursor(
+                    sessionId: session.id, source: SourceName.tuple, cursorJson: TupleCursor().json)
+                return
+            }
             if Self.captureIsInactive(diagnostic) {
                 let previouslyStarted = try store.sourceState(
                     sessionId: session.id, source: SourceName.tuple
@@ -105,22 +119,14 @@ public final class TupleClient: CallProvider {
             }
             let error = Self.commandError(
                 operation: "reading this call's Capture transcript",
-                command:
-                    "tuple --format json transcription show \(session.id) --wait --timeout \(timeout) --with-events --cursor \(cursor)",
+                command: "tuple \(arguments.joined(separator: " "))",
                 output: output)
             try store.setSourceState(
                 sessionId: session.id, source: SourceName.tuple, status: "error", detail: error)
             throw ChronicleError(error)
         }
 
-        // Tuple's durable cursor has already advanced past this batch, so it
-        // is spooled to disk before the database write; a crash or timeout in
-        // between leaves the file for the next pass instead of losing speech.
-        let spooled = Self.spool(output.stdout, store: store, session: session)
         try Self.apply(batch: TupleRecordParser.parse(output.stdout), store: store, session: session)
-        if let spooled {
-            try? FileManager.default.removeItem(at: spooled)
-        }
         try Self.escalatePersistentGap(store: store, session: session)
     }
 
@@ -140,57 +146,12 @@ public final class TupleClient: CallProvider {
         if batch.callEnded {
             try store.markCallEnded(session.id)
         }
-    }
-
-    // MARK: - Spool
-
-    /// Spool files older than this are orphans (their session was pruned or
-    /// renamed); a crashed pass is drained seconds later, not a day later.
-    static let spoolExpiry: TimeInterval = 24 * 3600
-
-    private static func spoolPrefix(sessionId: String) -> String {
-        "tuple-\(ChroniclePaths.safeSessionId(sessionId))-"
-    }
-
-    /// Writes the raw batch beside the database. Best-effort: a spool failure
-    /// falls back to the previous (unspooled) behavior rather than dropping
-    /// the batch that is already in hand.
-    static func spool(_ bytes: Data, store: ChronicleStore, session: SessionRecord) -> URL? {
-        guard !bytes.isEmpty else { return nil }
-        let directory = store.paths.spoolDirectory
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let milliseconds = Int64(Date().timeIntervalSince1970 * 1000)
-        let name = spoolPrefix(sessionId: session.id)
-            + String(format: "%015d", milliseconds)
-            + "-\(UUID().uuidString).ndjson"
-        let url = directory.appendingPathComponent(name)
-        do {
-            try bytes.write(to: url, options: .atomic)
-            return url
-        } catch {
-            return nil
-        }
-    }
-
-    static func drainSpool(store: ChronicleStore, session: SessionRecord) throws {
-        let directory = store.paths.spoolDirectory
-        guard
-            let entries = try? FileManager.default.contentsOfDirectory(
-                at: directory, includingPropertiesForKeys: [.contentModificationDateKey])
-        else { return }
-        let prefix = spoolPrefix(sessionId: session.id)
-        for url in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
-            if url.lastPathComponent.hasPrefix(prefix) {
-                if let bytes = try? Data(contentsOf: url) {
-                    try apply(batch: TupleRecordParser.parse(bytes), store: store, session: session)
-                }
-                try? FileManager.default.removeItem(at: url)
-            } else if let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey])
-                .contentModificationDate,
-                Date().timeIntervalSince(modified) > spoolExpiry
-            {
-                try? FileManager.default.removeItem(at: url)
-            }
+        // The cursor only advances once the batch is committed, so a crash or
+        // busy timeout before this point re-reads the batch instead of losing it.
+        if let after = batch.cursor {
+            try store.setSourceCursor(
+                sessionId: session.id, source: SourceName.tuple,
+                cursorJson: TupleCursor(after: after).json)
         }
     }
 
@@ -287,8 +248,8 @@ public final class TupleClient: CallProvider {
         return [
             "transcription is not running", "transcription not running", "no transcription",
             "no recording", "capture is not running", "capture not running", "not transcribing",
-            // A call that is still connecting exists in `tuple call current`
-            // before Tuple's transcription store has a record for it.
+            // A call that is still connecting exists in `tuple call show`
+            // before Tuple's capture store has a record for it.
             "no stored call matching",
         ].contains(where: detail.contains)
     }
@@ -368,6 +329,18 @@ struct ParsedTupleBatch {
     var status: TupleStatusUpdate?
     var callEnded = false
     var malformed = 0
+    /// Highest positive top-level record ID in the batch: Tuple's resume position.
+    var cursor: Int64?
+}
+
+/// Chronicle's resume position in a call's Capture stream, kept in
+/// `source_state.cursor_json`. Tuple resumes strictly after `after`.
+struct TupleCursor: Codable, Equatable {
+    var after: Int64?
+
+    var json: String {
+        String(decoding: (try? JSONEncoder().encode(self)) ?? Data("{}".utf8), as: UTF8.self)
+    }
 }
 
 enum TupleRecordParser {
@@ -381,8 +354,12 @@ enum TupleRecordParser {
                 batch.malformed += 1
                 continue
             }
+            if case .number(let id) = record["id"], id >= 1, id == id.rounded(), id < 9e15 {
+                batch.cursor = max(batch.cursor ?? 0, Int64(id))
+            }
             if record["kind"]?.stringValue == "status" {
-                if record["status"]?.stringValue == "call_ended" {
+                let framing = (record["status"] ?? record["type"])?.stringValue
+                if framing == "call_ended" {
                     batch.callEnded = true
                     batch.status = TupleStatusUpdate(
                         status: "ended", detail: "Call ended. The agent is finishing the handoff.")
